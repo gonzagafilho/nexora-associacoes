@@ -12,3 +12,13 @@ logs/
 uploads/
 tmp/
 .cache/
+
+
+# backups
+*.bak
+*.orig
+
+# pdfs gerados
+storage/pdfs/*
+!storage/pdfs/.gitkeep
+
