@@ -7,7 +7,8 @@ const state = {
   user: JSON.parse(localStorage.getItem("nexora_user") || "null"),
   tenant: JSON.parse(localStorage.getItem("nexora_tenant") || "null"),
   me: null,
-  route: location.hash.replace("#", "") || "dashboard"
+  route: location.hash.replace("#", "") || "dashboard",
+  saasFilters: { q: "", status: "", page: 1, limit: 10 }
 };
 
 const icons = {
@@ -30,7 +31,7 @@ function money(value) { return new Intl.NumberFormat("pt-BR", { style: "currency
 function date(value) { return value ? new Intl.DateTimeFormat("pt-BR").format(new Date(value)) : "—"; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function toast(message, error = false) { const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; toastRoot.append(el); setTimeout(() => el.remove(), 4200); }
-function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", cancelled: "Cancelado", approved: "Aprovado", in_process: "Processando" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
+function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", approved: "Aprovado", in_process: "Processando" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
 function field(name, label, value = "", type = "text", required = false, extra = "") { return `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${extra}></label>`; }
 function selectField(name, label, options, value) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${options.map(([key, text]) => `<option value="${key}" ${key === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`; }
 function statusFilter(value = "") { return `<select class="select" data-filter-status style="max-width:190px"><option value="">Todos os status</option><option value="pending" ${value === "pending" ? "selected" : ""}>Pendentes</option><option value="paid" ${value === "paid" ? "selected" : ""}>Pagas</option><option value="overdue" ${value === "overdue" ? "selected" : ""}>Vencidas</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Canceladas</option></select>`; }
@@ -158,9 +159,15 @@ function subscriptionStatusLabel(status) {
     active: "Ativas",
     trialing: "Em trial",
     overdue: "Inadimplentes",
-    blocked: "Bloqueadas"
+    blocked: "Bloqueadas",
+    cancelled: "Canceladas"
   };
   return labels[status] || status || "—";
+}
+
+function planLabel(plan) {
+  const labels = { trial: "Trial", professional: "Profissional", enterprise: "Enterprise" };
+  return labels[plan] || plan || "—";
 }
 
 function metricCard(label, value, note = "", tone = "") {
@@ -172,9 +179,55 @@ function renderSaasSessionExpired() {
   content().querySelector("[data-session-login]")?.addEventListener("click", logout);
 }
 
+function saasListQuery() {
+  const params = new URLSearchParams({ page: state.saasFilters.page, limit: state.saasFilters.limit });
+  if (state.saasFilters.q) params.set("q", state.saasFilters.q);
+  if (state.saasFilters.status) params.set("status", state.saasFilters.status);
+  return params.toString();
+}
+
+function renderSaasSubscriptionRows(items) {
+  if (!items.length) {
+    return '<div class="empty saas-empty">Nenhuma assinatura encontrada.</div>';
+  }
+
+  return '<div class="table-wrap saas-table-wrap"><table class="table saas-table"><thead><tr><th>Associação</th><th>Plano</th><th>Status</th><th>Valor</th><th>Próxima cobrança</th><th>Fim do trial</th><th>Último pagamento</th><th>Status último pagamento</th></tr></thead><tbody>' +
+    items.map((item) => '<tr><td><div class="cell-title">' + escapeHtml(item.tenantName || "—") + '</div><div class="cell-sub">' + escapeHtml(item.tenantSlug || item.tenantId || "—") + '</div></td><td>' + escapeHtml(planLabel(item.plan)) + '</td><td>' + badge(item.status) + '</td><td>' + money(item.amount) + '</td><td>' + date(item.nextBillingDate) + '</td><td>' + date(item.trialEndsAt) + '</td><td><div class="cell-title">' + date(item.lastPaymentAt) + '</div><div class="cell-sub">' + escapeHtml(item.lastPaymentId || "—") + '</div></td><td>' + (item.lastPaymentStatus ? badge(item.lastPaymentStatus) : '<span class="cell-sub">—</span>') + '</td></tr>').join("") +
+    '</tbody></table></div>';
+}
+
+function renderSaasPagination(list) {
+  if (list.totalPages <= 1) return '';
+  const previousDisabled = list.page <= 1 ? ' disabled' : '';
+  const nextDisabled = list.page >= list.totalPages ? ' disabled' : '';
+  return '<div class="saas-pagination"><button class="button button-secondary button-sm" data-saas-page="' + (list.page - 1) + '"' + previousDisabled + '>Anterior</button><span>Página ' + list.page + ' de ' + list.totalPages + '</span><button class="button button-secondary button-sm" data-saas-page="' + (list.page + 1) + '"' + nextDisabled + '>Próxima</button></div>';
+}
+
+function bindSaasDashboard() {
+  const form = content().querySelector("[data-saas-filters]");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    state.saasFilters.q = String(data.get("q") || "").trim();
+    state.saasFilters.status = String(data.get("status") || "");
+    state.saasFilters.page = 1;
+    await renderSaasDashboard();
+  });
+  form?.querySelector('[name="status"]')?.addEventListener("change", () => form.requestSubmit());
+  content().querySelectorAll("[data-saas-page]").forEach((button) => button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    state.saasFilters.page = Number(button.dataset.saasPage || 1);
+    await renderSaasDashboard();
+  }));
+}
+
 async function renderSaasDashboard() {
   try {
-    const data = await apiRequest("/api/subscription/admin/dashboard", { token: state.token });
+    const [data, list] = await Promise.all([
+      apiRequest("/api/subscription/admin/dashboard", { token: state.token }),
+      apiRequest("/api/subscription/admin/list?" + saasListQuery(), { token: state.token })
+    ]);
+    const status = state.saasFilters.status;
     content().innerHTML = pageHead("SaaS", "Dashboard executivo de assinaturas da plataforma NEXORA.") + '<section class="saas-hero"><div><span>Assinaturas</span><h2>' + money(data.monthlyRevenue) + '</h2><p>Receita mensal recorrente estimada</p></div><div class="saas-hero-side"><strong>' + money(data.annualRevenue) + '</strong><small>Receita anual projetada</small></div></section><section class="saas-metrics">' +
       metricCard("Assinaturas Ativas", data.activeSubscriptions, subscriptionStatusLabel("active"), "is-good") +
       metricCard("Em Trial", data.trialSubscriptions, subscriptionStatusLabel("trialing"), "is-info") +
@@ -183,7 +236,8 @@ async function renderSaasDashboard() {
       metricCard("Receita Mensal", money(data.monthlyRevenue), "Assinaturas ativas", "is-money") +
       metricCard("Receita Anual", money(data.annualRevenue), "Projeção 12 meses", "is-money") +
       metricCard("Total de Associações", data.totalTenants, "Tenants cadastrados", "is-info") +
-    '</section>';
+    '</section><section class="card saas-list-card"><header class="saas-list-head"><div><h2>Lista de Assinaturas</h2><p>' + list.total + ' assinatura(s) encontrada(s)</p></div></header><form class="toolbar saas-filterbar" data-saas-filters><input class="input" name="q" placeholder="Buscar por associação ou slug" value="' + escapeHtml(state.saasFilters.q) + '"><select class="select" name="status"><option value=""' + (!status ? ' selected' : '') + '>Todos os status</option><option value="trialing"' + (status === 'trialing' ? ' selected' : '') + '>Trialing</option><option value="active"' + (status === 'active' ? ' selected' : '') + '>Active</option><option value="overdue"' + (status === 'overdue' ? ' selected' : '') + '>Overdue</option><option value="cancelled"' + (status === 'cancelled' ? ' selected' : '') + '>Cancelled</option></select><button class="button button-primary" type="submit">Filtrar</button></form>' + renderSaasSubscriptionRows(list.items || []) + renderSaasPagination(list) + '</section>';
+    bindSaasDashboard();
   } catch (error) {
     if (error.status === 401 || /Token inválido|Token não informado|401/.test(error.message)) {
       renderSaasSessionExpired();

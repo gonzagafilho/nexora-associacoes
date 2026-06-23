@@ -76,6 +76,96 @@ async function calculateSubscriptionDashboard(now = new Date()) {
   };
 }
 
+function toPositiveInt(value, fallback, max = 100) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function buildSubscriptionListFilter(query) {
+  const filter = {};
+  const status = String(query.status || "").trim();
+  if (status) {
+    filter.status = status;
+  }
+
+  const q = String(query.q || "").trim();
+  if (!q) return filter;
+
+  const regex = new RegExp(escapeRegExp(q), "i");
+  const tenants = await Tenant.find({
+    $or: [{ name: regex }, { slug: regex }]
+  }).select("_id").lean();
+
+  filter.tenantId = { $in: tenants.map((tenant) => tenant._id) };
+  return filter;
+}
+
+async function listAdminSubscriptions(query) {
+  const page = toPositiveInt(query.page, 1, 10000);
+  const limit = toPositiveInt(query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const filter = await buildSubscriptionListFilter(query);
+
+  const [total, subscriptions] = await Promise.all([
+    TenantSubscription.countDocuments(filter),
+    TenantSubscription.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean()
+  ]);
+
+  const tenantIds = subscriptions.map((subscription) => subscription.tenantId).filter(Boolean);
+  const tenants = await Tenant.find({ _id: { $in: tenantIds } }).select("name slug").lean();
+  const tenantsById = new Map(tenants.map((tenant) => [String(tenant._id), tenant]));
+
+  const items = await Promise.all(subscriptions.map(async (subscription) => {
+    const tenant = tenantsById.get(String(subscription.tenantId)) || {};
+    const lastPayment = await SaasSubscriptionPayment.findOne({
+      tenantId: subscription.tenantId
+    }).sort({ createdAt: -1 }).lean();
+
+    return {
+      tenantId: subscription.tenantId,
+      tenantName: tenant.name || "",
+      tenantSlug: tenant.slug || "",
+      plan: subscription.plan,
+      status: subscription.status,
+      amount: subscription.amount || 0,
+      trialEndsAt: subscription.trialEndsAt,
+      currentPeriodStart: subscription.currentPeriodStart,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+      nextBillingDate: subscription.nextBillingDate,
+      lastPaymentAt: subscription.lastPaymentAt,
+      lastPaymentStatus: lastPayment?.status || "",
+      lastPaymentId: lastPayment?.gatewayPaymentId || lastPayment?.externalId || lastPayment?._id || "",
+      createdAt: subscription.createdAt
+    };
+  }));
+
+  return {
+    items,
+    page,
+    limit,
+    total,
+    totalPages: Math.ceil(total / limit) || 0
+  };
+}
+
+router.get("/admin/list", auth, requireAdmin, async (req, res) => {
+  try {
+    const result = await listAdminSubscriptions(req.query || {});
+    return res.json(result);
+  } catch (error) {
+    console.error("[SAAS LIST] erro", error.message);
+    return res.status(500).json({
+      ok: false,
+      message: "Erro ao listar assinaturas SaaS."
+    });
+  }
+});
+
 router.get("/admin/dashboard", auth, requireAdmin, async (req, res) => {
   try {
     const dashboard = await calculateSubscriptionDashboard();

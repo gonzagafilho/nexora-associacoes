@@ -16,6 +16,7 @@ const originals = {
   mercadoPagoAccessToken: process.env.MERCADOPAGO_ACCESS_TOKEN,
   publicBaseUrl: process.env.PUBLIC_BASE_URL,
   tenantCountDocuments: Tenant.countDocuments,
+  tenantFind: Tenant.find,
   tenantFindById: Tenant.findById,
   subscriptionCountDocuments: TenantSubscription.countDocuments,
   subscriptionFind: TenantSubscription.find,
@@ -29,6 +30,7 @@ afterEach(() => {
   process.env.MERCADOPAGO_ACCESS_TOKEN = originals.mercadoPagoAccessToken;
   process.env.PUBLIC_BASE_URL = originals.publicBaseUrl;
   Tenant.countDocuments = originals.tenantCountDocuments;
+  Tenant.find = originals.tenantFind;
   Tenant.findById = originals.tenantFindById;
   TenantSubscription.countDocuments = originals.subscriptionCountDocuments;
   TenantSubscription.find = originals.subscriptionFind;
@@ -240,6 +242,117 @@ test("GET /api/subscription/admin/dashboard calcula métricas SaaS", async () =>
       monthlyRevenue: 199.6,
       annualRevenue: 2395.2,
       totalTenants: 6
+    });
+  });
+});
+
+test("GET /api/subscription/admin/list retorna assinaturas SaaS paginadas com tenant e último pagamento", async () => {
+  const createdAt = new Date("2026-06-01T10:00:00.000Z");
+  const nextBillingDate = new Date("2026-07-01T10:00:00.000Z");
+  const lastPaymentAt = new Date("2026-06-01T10:05:00.000Z");
+  const subscription = {
+    _id: subscriptionId,
+    tenantId,
+    plan: "professional",
+    status: "active",
+    amount: 49.9,
+    trialEndsAt: new Date("2026-05-31T23:59:59.000Z"),
+    currentPeriodStart: createdAt,
+    currentPeriodEnd: nextBillingDate,
+    nextBillingDate,
+    lastPaymentAt,
+    createdAt
+  };
+
+  TenantSubscription.countDocuments = async (filter) => {
+    assert.equal(filter.status, "active");
+    assert.deepEqual(filter.tenantId, { $in: [tenantId] });
+    return 3;
+  };
+
+  TenantSubscription.find = (filter) => {
+    assert.equal(filter.status, "active");
+    assert.deepEqual(filter.tenantId, { $in: [tenantId] });
+    return {
+      sort(sortValue) {
+        assert.deepEqual(sortValue, { createdAt: -1 });
+        return {
+          skip(skipValue) {
+            assert.equal(skipValue, 1);
+            return {
+              limit(limitValue) {
+                assert.equal(limitValue, 1);
+                return lean([subscription]);
+              }
+            };
+          }
+        };
+      }
+    };
+  };
+
+  let tenantFindCalls = 0;
+  Tenant.find = (query) => {
+    tenantFindCalls += 1;
+    if (tenantFindCalls === 1) {
+      assert.ok(query.$or[0].name instanceof RegExp);
+      assert.equal(query.$or[0].name.test("Nexora Associação"), true);
+      assert.equal(query.$or[1].slug.test("nexora-associacao"), true);
+      return { select: (field) => {
+        assert.equal(field, "_id");
+        return lean([{ _id: tenantId }]);
+      } };
+    }
+
+    assert.deepEqual(query, { _id: { $in: [tenantId] } });
+    return { select: (field) => {
+      assert.equal(field, "name slug");
+      return lean([{ _id: tenantId, name: "Nexora Associação", slug: "nexora-associacao" }]);
+    } };
+  };
+
+  SaasSubscriptionPayment.findOne = (query) => {
+    assert.deepEqual(query, { tenantId });
+    return {
+      sort(sortValue) {
+        assert.deepEqual(sortValue, { createdAt: -1 });
+        return lean({
+          _id: "payment-doc-id",
+          gatewayPaymentId: "mp-last-payment",
+          status: "approved",
+          createdAt: lastPaymentAt
+        });
+      }
+    };
+  };
+
+  await withServer(async (baseUrl) => {
+    const response = await realFetch(`${baseUrl}/api/subscription/admin/list?status=active&q=nexora&page=2&limit=1`, {
+      headers: { Authorization: `Bearer ${authToken()}` }
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.page, 2);
+    assert.equal(body.limit, 1);
+    assert.equal(body.total, 3);
+    assert.equal(body.totalPages, 3);
+    assert.equal(body.items.length, 1);
+    assert.deepEqual(body.items[0], {
+      tenantId,
+      tenantName: "Nexora Associação",
+      tenantSlug: "nexora-associacao",
+      plan: "professional",
+      status: "active",
+      amount: 49.9,
+      trialEndsAt: "2026-05-31T23:59:59.000Z",
+      currentPeriodStart: "2026-06-01T10:00:00.000Z",
+      currentPeriodEnd: "2026-07-01T10:00:00.000Z",
+      nextBillingDate: "2026-07-01T10:00:00.000Z",
+      lastPaymentAt: "2026-06-01T10:05:00.000Z",
+      lastPaymentStatus: "approved",
+      lastPaymentId: "mp-last-payment",
+      createdAt: "2026-06-01T10:00:00.000Z"
     });
   });
 });
