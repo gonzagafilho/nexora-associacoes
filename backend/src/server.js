@@ -1,9 +1,11 @@
 const app = require("./app");
 const { port } = require("./config/env");
 const { connectDatabase } = require("./config/database");
+const { startSubscriptionRenewalSchedule } = require("./services/subscriptionRenewalJob");
 
 async function bootstrap() {
   await connectDatabase();
+  startSubscriptionRenewalSchedule();
 
   app.listen(port, () => {
     console.log(`[api] Associacao BolePix rodando na porta ${port}`);

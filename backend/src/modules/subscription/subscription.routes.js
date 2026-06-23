@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const auth = require("../../middlewares/auth");
 const SaasSubscriptionPayment = require("../../models/SaasSubscriptionPayment");
+const Tenant = require("../../models/Tenant");
 const TenantSubscription = require("../../models/TenantSubscription");
 const User = require("../../models/User");
 const { mercadoPagoRequest } = require("../../services/mercadopago/tenantMercadoPagoService");
@@ -29,6 +30,64 @@ function getPayerEmail(user) {
   if (!email || email.endsWith(".local")) return fallback;
   return email;
 }
+
+function requireAdmin(req, res, next) {
+  const allowedRoles = new Set(["admin", "owner", "superadmin"]);
+  if (!allowedRoles.has(req.user?.role)) {
+    return res.status(403).json({ ok: false, message: "Acesso administrativo necessário." });
+  }
+  return next();
+}
+
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+async function calculateSubscriptionDashboard(now = new Date()) {
+  const expiringLimit = addDays(now, 7);
+  const [
+    activeSubscriptions,
+    trialSubscriptions,
+    overdueSubscriptions,
+    expiringNext7Days,
+    totalTenants,
+    activeRows
+  ] = await Promise.all([
+    TenantSubscription.countDocuments({ status: "active" }),
+    TenantSubscription.countDocuments({ status: "trialing" }),
+    TenantSubscription.countDocuments({ status: "overdue" }),
+    TenantSubscription.countDocuments({ nextBillingDate: { $lte: expiringLimit } }),
+    Tenant.countDocuments({}),
+    TenantSubscription.find({ status: "active" }).select("amount").lean()
+  ]);
+
+  const monthlyRevenue = activeRows.reduce((total, subscription) => {
+    return total + Number(subscription.amount || 0);
+  }, 0);
+
+  return {
+    activeSubscriptions,
+    trialSubscriptions,
+    overdueSubscriptions,
+    expiringNext7Days,
+    monthlyRevenue,
+    annualRevenue: monthlyRevenue * 12,
+    totalTenants
+  };
+}
+
+router.get("/admin/dashboard", auth, requireAdmin, async (req, res) => {
+  try {
+    const dashboard = await calculateSubscriptionDashboard();
+    return res.json(dashboard);
+  } catch (error) {
+    console.error("[SAAS DASHBOARD] erro", error.message);
+    return res.status(500).json({
+      ok: false,
+      message: "Erro ao calcular dashboard SaaS."
+    });
+  }
+});
 
 router.get("/me", auth, async (req, res) => {
   const subscription = await TenantSubscription.findOne({
@@ -168,10 +227,6 @@ function getWebhookPaymentId(req) {
     req.query?.id ||
     req.query?.resource
   );
-}
-
-function addDays(date, days) {
-  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
 function getApprovedAt(payment) {
