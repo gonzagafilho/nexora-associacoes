@@ -18,7 +18,9 @@ const icons = {
   card: "M3 5h18v14H3V5Zm0 5h18M7 15h3",
   settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0-13v2m0 15v2m9.5-9.5h-2m-15 0h-2m16.2-6.2-1.4 1.4M6.7 17.3l-1.4 1.4m13.4 0-1.4-1.4M6.7 6.7 5.3 5.3",
   logout: "M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4",
-  menu: "M4 6h16M4 12h16M4 18h16"
+  menu: "M4 6h16M4 12h16M4 18h16",
+  saas: "M4 7h16M4 12h16M4 17h10m4-10v10M8 7v10",
+  star: "m12 3 2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6-4.36-4.25 6.03-.88L12 3Z"
 };
 
 function icon(name) {
@@ -81,7 +83,7 @@ function renderLogin() {
 
 const navItems = [
   ["dashboard", "Dashboard", "dashboard"], ["associados", "Associados", "users"], ["mensalidades", "Mensalidades", "calendar"],
-  ["cobrancas", "Cobranças", "receipt"], ["mercadopago", "Mercado Pago", "card"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
+  ["cobrancas", "Cobranças", "receipt"], ["mercadopago", "Mercado Pago", "card"], ["saas", "SaaS", "saas"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
 ];
 function shellHtml() {
   return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand"><img src="/nexora-logo.png" style="height:40px;width:auto" alt="NEXORA"></div><nav class="nav">${navItems.map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot">NEXORA • Gestão Inteligente</div></aside><section class="main"><header class="topbar"><div style="display:flex;align-items:center;gap:12px"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="tenant-name">${escapeHtml(state.tenant?.name || state.me?.tenant?.name || "Associação")}</div></div><div class="user-menu"><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main></section></div>`;
@@ -102,7 +104,7 @@ function pageHead(title, subtitle, actions = "") { return `<header class="page-h
 async function renderRoute() {
   loading();
   try {
-    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, mercadopago: renderMercadoPago, assinatura: renderSubscription, configuracoes: renderSettings };
+    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
     await (routes[state.route] || renderDashboard)();
   } catch (error) { content().innerHTML = `<div class="card empty">Não foi possível carregar esta tela.<br><small>${escapeHtml(error.message)}</small></div>`; toast(error.message, true); }
 }
@@ -150,6 +152,47 @@ function check(name, label, checked) { return `<label class="field" style="flex-
 function secret(name, label, masked) { return `<label class="field"><span>${label}</span><div class="secret-row"><input class="input" name="${name}" type="password" placeholder="${escapeHtml(masked || "Não configurado")}"><button type="button" class="button button-secondary button-sm" data-show-secret="${name}">Mostrar</button></div><small style="color:var(--muted)">Vazio mantém o valor salvo.</small></label>`; }
 function bindMercadoPago() { const form = content().querySelector("[data-mp-form]"); content().querySelectorAll("[data-show-secret]").forEach((button) => button.addEventListener("click", () => { const input = form.elements[button.dataset.showSecret]; input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? "Mostrar" : "Ocultar"; })); content().querySelector("[data-copy-webhook]").addEventListener("click", async () => { await navigator.clipboard.writeText(content().querySelector("[data-webhook]").value); toast("Webhook copiado."); }); content().querySelector("[data-test-mp]").addEventListener("click", async () => { try { const result = await api("/api/me/mercadopago-settings/test", { method: "POST" }); toast(`${result.message} ${result.accountHolderName || ""}`); await renderMercadoPago(); } catch (error) { toast(error.message, true); } }); form.addEventListener("submit", async (event) => { event.preventDefault(); const fd = new FormData(form); const enabled = (name) => form.elements[name].checked; try { await api("/api/me/mercadopago-settings", { method: "PUT", body: JSON.stringify({ mercadopagoEnabled: enabled("mercadopagoEnabled"), mercadopagoPixEnabled: enabled("mercadopagoPixEnabled"), mercadopagoBoletoEnabled: enabled("mercadopagoBoletoEnabled"), mercadopagoEnvironment: fd.get("mercadopagoEnvironment"), mercadopagoAccessToken: fd.get("mercadopagoAccessToken"), mercadopagoPublicKey: fd.get("mercadopagoPublicKey"), mercadopagoClientId: fd.get("mercadopagoClientId"), mercadopagoClientSecret: fd.get("mercadopagoClientSecret"), mercadopagoWebhookSecret: fd.get("mercadopagoWebhookSecret"), mercadopagoBoletoMethod: fd.get("mercadopagoBoletoMethod") }) }); await api("/api/me/billing-settings/boleto", { method: "PUT", body: JSON.stringify({ boletoEnabled: enabled("mercadopagoBoletoEnabled"), boletoFeeMode: fd.get("boletoFeeMode"), boletoFeeAmount: Number(fd.get("boletoFeeAmount") || 0), boletoDueDays: state.me?.billingSettings?.boletoDueDays || 3, boletoInstructions: state.me?.billingSettings?.boletoInstructions || "" }) }); toast("Mercado Pago salvo."); await renderMercadoPago(); } catch (error) { toast(error.message, true); } }); }
 
+
+function subscriptionStatusLabel(status) {
+  const labels = {
+    active: "Ativas",
+    trialing: "Em trial",
+    overdue: "Inadimplentes",
+    blocked: "Bloqueadas"
+  };
+  return labels[status] || status || "—";
+}
+
+function metricCard(label, value, note = "", tone = "") {
+  return '<article class="saas-card ' + tone + '"><div class="saas-card-label">' + label + '</div><div class="saas-card-value">' + value + '</div>' + (note ? '<div class="saas-card-note">' + note + '</div>' : '') + '</article>';
+}
+
+function renderSaasSessionExpired() {
+  content().innerHTML = pageHead("SaaS", "Dashboard executivo de assinaturas da plataforma.") + '<section class="card saas-alert"><h2>Sessão expirada</h2><p>Entre novamente para consultar as métricas administrativas de assinaturas.</p><button class="button button-primary" type="button" data-session-login>Fazer login</button></section>';
+  content().querySelector("[data-session-login]")?.addEventListener("click", logout);
+}
+
+async function renderSaasDashboard() {
+  try {
+    const data = await apiRequest("/api/subscription/admin/dashboard", { token: state.token });
+    content().innerHTML = pageHead("SaaS", "Dashboard executivo de assinaturas da plataforma NEXORA.") + '<section class="saas-hero"><div><span>Assinaturas</span><h2>' + money(data.monthlyRevenue) + '</h2><p>Receita mensal recorrente estimada</p></div><div class="saas-hero-side"><strong>' + money(data.annualRevenue) + '</strong><small>Receita anual projetada</small></div></section><section class="saas-metrics">' +
+      metricCard("Assinaturas Ativas", data.activeSubscriptions, subscriptionStatusLabel("active"), "is-good") +
+      metricCard("Em Trial", data.trialSubscriptions, subscriptionStatusLabel("trialing"), "is-info") +
+      metricCard("Inadimplentes", data.overdueSubscriptions, subscriptionStatusLabel("overdue"), data.overdueSubscriptions > 0 ? "is-danger" : "") +
+      metricCard("Vencendo em 7 dias", data.expiringNext7Days, "Próximas renovações", "is-warning") +
+      metricCard("Receita Mensal", money(data.monthlyRevenue), "Assinaturas ativas", "is-money") +
+      metricCard("Receita Anual", money(data.annualRevenue), "Projeção 12 meses", "is-money") +
+      metricCard("Total de Associações", data.totalTenants, "Tenants cadastrados", "is-info") +
+    '</section>';
+  } catch (error) {
+    if (error.status === 401 || /Token inválido|Token não informado|401/.test(error.message)) {
+      renderSaasSessionExpired();
+      return;
+    }
+    content().innerHTML = pageHead("SaaS", "Dashboard executivo de assinaturas da plataforma.") + '<section class="card empty saas-error"><strong>Não foi possível carregar o Dashboard SaaS.</strong><br><small>' + escapeHtml(error.message) + '</small></section>';
+    toast(error.message, true);
+  }
+}
 
 async function renderSubscription() {
   const me = await api("/api/me");

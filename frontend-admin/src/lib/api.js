@@ -10,7 +10,10 @@ export async function apiRequest(path, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.message || `Erro HTTP ${response.status}`);
+    const error = new Error(body.message || `Erro HTTP ${response.status}`);
+    error.status = response.status;
+    error.body = body;
+    throw error;
   }
   return body;
 }
