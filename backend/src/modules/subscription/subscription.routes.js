@@ -1,0 +1,296 @@
+const express = require("express");
+const crypto = require("crypto");
+const auth = require("../../middlewares/auth");
+const SaasSubscriptionPayment = require("../../models/SaasSubscriptionPayment");
+const TenantSubscription = require("../../models/TenantSubscription");
+const User = require("../../models/User");
+const { mercadoPagoRequest } = require("../../services/mercadopago/tenantMercadoPagoService");
+
+const router = express.Router();
+
+const PROFESSIONAL_PLAN = "professional";
+const PROFESSIONAL_AMOUNT = 49.9;
+
+function addMinutes(date, minutes) {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+function getBaseUrl(req) {
+  return (
+    process.env.PUBLIC_BASE_URL ||
+    process.env.APP_URL ||
+    `${req.protocol}://${req.get("host")}`
+  ).replace(/\/+$/, "");
+}
+
+function getPayerEmail(user) {
+  const fallback = process.env.SAAS_DEFAULT_PAYER_EMAIL || "assinatura@nexoracloud.com.br";
+  const email = String(user?.email || "").trim().toLowerCase();
+  if (!email || email.endsWith(".local")) return fallback;
+  return email;
+}
+
+router.get("/me", auth, async (req, res) => {
+  const subscription = await TenantSubscription.findOne({
+    tenantId: req.user.tenantId
+  }).lean();
+
+  return res.json({
+    ok: true,
+    subscription
+  });
+});
+
+router.post("/checkout", auth, async (req, res) => {
+  try {
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+    if (!accessToken) {
+      return res.status(500).json({
+        ok: false,
+        message: "Mercado Pago da plataforma não configurado."
+      });
+    }
+
+    const tenantId = req.user.tenantId;
+    const subscription = await TenantSubscription.findOneAndUpdate(
+      { tenantId },
+      {
+        $setOnInsert: {
+          tenantId,
+          plan: PROFESSIONAL_PLAN,
+          status: "trialing",
+          amount: PROFESSIONAL_AMOUNT
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    const existing = await SaasSubscriptionPayment.findOne({
+      tenantId,
+      subscriptionId: subscription._id,
+      gateway: "mercadopago",
+      method: "pix",
+      plan: PROFESSIONAL_PLAN,
+      status: { $in: ["pending", "in_process"] },
+      expiresAt: { $gt: new Date() }
+    }).lean();
+
+    if (existing) {
+      return res.json({
+        ok: true,
+        paymentId: existing.gatewayPaymentId || existing.externalId,
+        status: existing.status,
+        amount: existing.amount,
+        qrCode: existing.qrCode,
+        qrCodeBase64: existing.qrCodeBase64,
+        copyPaste: existing.copyPaste || existing.qrCode,
+        expiresAt: existing.expiresAt
+      });
+    }
+
+    const user = await User.findOne({ _id: req.user.id, tenantId }).lean();
+    const externalReference = `nexora_saas_${tenantId}_${Date.now()}`;
+    const expiresAt = addMinutes(new Date(), 30);
+    const idempotencyKey = crypto
+      .createHash("sha256")
+      .update(externalReference)
+      .digest("hex");
+
+    const payment = await mercadoPagoRequest("/v1/payments", accessToken, {
+      method: "POST",
+      headers: { "X-Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({
+        transaction_amount: PROFESSIONAL_AMOUNT,
+        description: "NEXORA Gestão Inteligente - Plano Professional",
+        payment_method_id: "pix",
+        external_reference: externalReference,
+        date_of_expiration: expiresAt.toISOString(),
+        notification_url: `${getBaseUrl(req)}/api/subscription/webhooks/mercadopago`,
+        payer: {
+          email: getPayerEmail(user)
+        }
+      })
+    });
+
+    const transactionData = payment.point_of_interaction?.transaction_data || {};
+    const qrCode = transactionData.qr_code || "";
+    const qrCodeBase64 = transactionData.qr_code_base64 || "";
+
+    const saved = await SaasSubscriptionPayment.create({
+      tenantId,
+      subscriptionId: subscription._id,
+      plan: PROFESSIONAL_PLAN,
+      gateway: "mercadopago",
+      method: "pix",
+      externalId: String(payment.id),
+      gatewayPaymentId: String(payment.id),
+      externalReference,
+      status: payment.status || "pending",
+      amount: PROFESSIONAL_AMOUNT,
+      qrCode,
+      copyPaste: qrCode,
+      qrCodeBase64,
+      ticketUrl: transactionData.ticket_url,
+      expiresAt,
+      rawCreateResponse: payment,
+      rawResponse: payment,
+      rawPayment: payment,
+      rawLastStatusResponse: payment,
+      lastCheckedAt: new Date()
+    });
+
+    return res.json({
+      ok: true,
+      paymentId: saved.gatewayPaymentId || saved.externalId,
+      status: saved.status,
+      amount: saved.amount,
+      qrCode: saved.qrCode,
+      qrCodeBase64: saved.qrCodeBase64,
+      copyPaste: saved.copyPaste || saved.qrCode,
+      expiresAt: saved.expiresAt
+    });
+  } catch (error) {
+    console.error("[SAAS CHECKOUT] erro", error.message);
+    return res.status(error.statusCode || 500).json({
+      ok: false,
+      message: error.statusCode ? error.message : "Erro ao gerar Pix da assinatura."
+    });
+  }
+});
+
+
+function getWebhookPaymentId(req) {
+  return (
+    req.body?.data?.id ||
+    req.body?.id ||
+    req.body?.resource ||
+    req.query?.["data.id"] ||
+    req.query?.id ||
+    req.query?.resource
+  );
+}
+
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function getApprovedAt(payment) {
+  const approvedAt = payment.date_approved ? new Date(payment.date_approved) : new Date();
+  return Number.isNaN(approvedAt.getTime()) ? new Date() : approvedAt;
+}
+
+async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) {
+  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!accessToken) {
+    const error = new Error("Mercado Pago da plataforma não configurado.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const subscriptionPayment = await SaasSubscriptionPayment.findOne({
+    gateway: "mercadopago",
+    $or: [
+      { externalId: String(paymentId) },
+      { gatewayPaymentId: String(paymentId) }
+    ]
+  });
+
+  if (!subscriptionPayment) {
+    return { ok: false, reason: "subscription_payment_not_found" };
+  }
+
+  const payment = await mercadoPagoRequest(`/v1/payments/${paymentId}`, accessToken, {
+    method: "GET"
+  });
+
+  const previousStatus = subscriptionPayment.status;
+  const wasAlreadyPaid = ["approved", "paid"].includes(previousStatus) && Boolean(subscriptionPayment.paidAt);
+
+  subscriptionPayment.status = payment.status || subscriptionPayment.status;
+  subscriptionPayment.rawWebhookPayload = webhookPayload || subscriptionPayment.rawWebhookPayload;
+  subscriptionPayment.rawPayment = payment;
+  subscriptionPayment.rawLastStatusResponse = payment;
+  subscriptionPayment.rawResponse = payment;
+  subscriptionPayment.lastCheckedAt = new Date();
+  subscriptionPayment.webhookReceivedAt = new Date();
+
+  const isApproved = payment.status === "approved";
+  if (!isApproved) {
+    await subscriptionPayment.save();
+    return {
+      ok: true,
+      activated: false,
+      alreadyPaid: wasAlreadyPaid,
+      status: subscriptionPayment.status
+    };
+  }
+
+  const paidAt = getApprovedAt(payment);
+  subscriptionPayment.status = "approved";
+  subscriptionPayment.paidAt = subscriptionPayment.paidAt || paidAt;
+  subscriptionPayment.amount = Number(payment.transaction_amount ?? subscriptionPayment.amount ?? PROFESSIONAL_AMOUNT);
+  await subscriptionPayment.save();
+
+  if (wasAlreadyPaid) {
+    return {
+      ok: true,
+      activated: false,
+      alreadyPaid: true,
+      status: subscriptionPayment.status
+    };
+  }
+
+  const periodStart = new Date();
+  const periodEnd = addDays(periodStart, 30);
+  await TenantSubscription.findOneAndUpdate(
+    {
+      _id: subscriptionPayment.subscriptionId,
+      tenantId: subscriptionPayment.tenantId
+    },
+    {
+      $set: {
+        status: "active",
+        plan: PROFESSIONAL_PLAN,
+        amount: PROFESSIONAL_AMOUNT,
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        nextBillingDate: periodEnd,
+        lastPaymentAt: paidAt
+      }
+    },
+    { new: true }
+  );
+
+  return {
+    ok: true,
+    activated: true,
+    alreadyPaid: false,
+    status: subscriptionPayment.status
+  };
+}
+
+router.post("/webhooks/mercadopago", async (req, res) => {
+  try {
+    const paymentId = getWebhookPaymentId(req);
+    if (!paymentId) {
+      return res.status(400).json({
+        ok: false,
+        message: "paymentId não informado."
+      });
+    }
+
+    const result = await syncSaasPaymentFromMercadoPago(paymentId, req.body || {});
+    return res.json({
+      ok: true,
+      result
+    });
+  } catch (error) {
+    console.error("[SAAS WEBHOOK] erro", error.message);
+    return res.status(error.statusCode || 500).json({
+      ok: false,
+      message: error.statusCode ? error.message : "Erro ao processar webhook SaaS."
+    });
+  }
+});
+
+module.exports = router;

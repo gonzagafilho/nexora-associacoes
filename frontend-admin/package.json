@@ -1,0 +1,10 @@
+{
+  "name": "nexora-admin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/lib/api.js && node --check src/app.js && node --check src/modules/settings/MercadoPagoSettings.js",
+    "build": "node scripts/build.js"
+  }
+}

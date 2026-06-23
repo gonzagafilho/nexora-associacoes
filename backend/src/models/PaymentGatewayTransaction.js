@@ -1,0 +1,86 @@
+const mongoose = require("mongoose");
+
+const schema = new mongoose.Schema(
+  {
+    tenantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tenant",
+      required: true,
+      index: true
+    },
+
+    invoiceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Invoice",
+      required: true,
+      index: true
+    },
+
+    associateId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Associate",
+      index: true
+    },
+
+    gateway: {
+      type: String,
+      enum: ["mercadopago", "cora"],
+      default: "mercadopago",
+      index: true
+    },
+
+    method: {
+      type: String,
+      enum: ["pix", "boleto"],
+      default: "pix",
+      index: true
+    },
+
+    externalId: String,
+    externalReference: String,
+
+    status: {
+      type: String,
+      default: "pending",
+      index: true
+    },
+
+    amount: Number,
+    originalAmount: Number,
+    feeAmount: Number,
+    totalAmount: Number,
+
+    qrCode: String,
+    qrCodeBase64: String,
+    ticketUrl: String,
+    boletoUrl: String,
+    barcode: String,
+    digitableLine: String,
+    expiresAt: Date,
+
+    paidAt: Date,
+
+    rawCreateResponse: Object,
+    rawWebhook: Object,
+    rawPayment: Object,
+    rawWebhookPayload: Object,
+    rawLastStatusResponse: Object,
+
+    lastCheckedAt: Date,
+    webhookReceivedAt: Date,
+
+    errorMessage: String
+  },
+  { timestamps: true }
+);
+
+schema.index({ tenantId: 1, invoiceId: 1, gateway: 1, method: 1, createdAt: -1 });
+schema.index(
+  { gateway: 1, externalId: 1 },
+  { unique: true, sparse: true }
+);
+
+module.exports = mongoose.model(
+  "PaymentGatewayTransaction",
+  schema
+);

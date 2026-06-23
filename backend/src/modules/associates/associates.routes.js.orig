@@ -1,0 +1,105 @@
+const express = require("express");
+const auth = require("../../middlewares/auth");
+const Associate = require("../../models/Associate");
+
+const router = express.Router();
+
+router.post("/", auth, async (req, res) => {
+  try {
+    const associate = await Associate.create({
+      tenantId: req.user.tenantId,
+      name: req.body.name,
+      cpf: req.body.cpf,
+      phone: req.body.phone,
+      whatsapp: req.body.whatsapp || req.body.phone,
+      email: req.body.email,
+      address: req.body.address,
+      addressNumber: req.body.addressNumber,
+      neighborhood: req.body.neighborhood,
+      city: req.body.city,
+      state: req.body.state,
+      zipCode: req.body.zipCode,
+      notes: req.body.notes,
+      status: req.body.status || "active"
+    });
+
+    return res.status(201).json({ ok: true, associate });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ ok: false, message: "CPF já cadastrado nesta associação." });
+    }
+
+    return res.status(500).json({ ok: false, message: "Erro ao criar associado." });
+  }
+});
+
+router.get("/", auth, async (req, res) => {
+  const query = { tenantId: req.user.tenantId };
+
+  if (req.query.status) query.status = req.query.status;
+
+  if (req.query.search) {
+    const search = String(req.query.search);
+    query.$or = [
+      { name: new RegExp(search, "i") },
+      { cpf: new RegExp(search, "i") },
+      { phone: new RegExp(search, "i") }
+    ];
+  }
+
+  const associates = await Associate.find(query).sort({ createdAt: -1 }).limit(200);
+
+  return res.json({ ok: true, associates });
+});
+
+router.get("/:id", auth, async (req, res) => {
+  const associate = await Associate.findOne({
+    _id: req.params.id,
+    tenantId: req.user.tenantId
+  });
+
+  if (!associate) {
+    return res.status(404).json({ ok: false, message: "Associado não encontrado." });
+  }
+
+  return res.json({ ok: true, associate });
+});
+
+router.put("/:id", auth, async (req, res) => {
+  const associate = await Associate.findOneAndUpdate(
+    { _id: req.params.id, tenantId: req.user.tenantId },
+    {
+      name: req.body.name,
+      cpf: req.body.cpf,
+      phone: req.body.phone,
+      whatsapp: req.body.whatsapp,
+      email: req.body.email,
+      address: req.body.address,
+      notes: req.body.notes,
+      status: req.body.status
+    },
+    { new: true, runValidators: true }
+  );
+
+  if (!associate) {
+    return res.status(404).json({ ok: false, message: "Associado não encontrado." });
+  }
+
+  return res.json({ ok: true, associate });
+});
+
+router.delete("/:id", auth, async (req, res) => {
+  const associate = await Associate.findOneAndUpdate(
+    { _id: req.params.id, tenantId: req.user.tenantId },
+    { status: "inactive" },
+    { new: true }
+  );
+
+  if (!associate) {
+    return res.status(404).json({ ok: false, message: "Associado não encontrado." });
+  }
+
+  return res.json({ ok: true, associate });
+});
+
+module.exports = router;

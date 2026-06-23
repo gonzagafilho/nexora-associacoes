@@ -1,0 +1,103 @@
+const express = require("express");
+const path = require("path");
+
+const auth = require("../../middlewares/auth");
+const Invoice = require("../../models/Invoice");
+const Associate = require("../../models/Associate");
+const Tenant = require("../../models/Tenant");
+const TenantBranding = require("../../models/TenantBranding");
+const TenantBillingSettings = require("../../models/TenantBillingSettings");
+const InvoicePix = require("../../models/InvoicePix");
+const PaymentGatewayTransaction = require("../../models/PaymentGatewayTransaction");
+
+const { generateInvoicePdf } = require("../../services/pdfService");
+
+const router = express.Router();
+
+router.post("/:id/pdf", auth, async (req, res) => {
+  const invoice = await Invoice.findOne({
+    _id: req.params.id,
+    tenantId: req.user.tenantId
+  });
+
+  if (!invoice) {
+    return res.status(404).json({
+      ok: false,
+      message: "Cobrança não encontrada."
+    });
+  }
+
+  const [associate, tenant, branding, billingSettings, invoicePix, boletoTransaction] =
+    await Promise.all([
+      Associate.findOne({
+        _id: invoice.associateId,
+        tenantId: req.user.tenantId
+      }),
+      Tenant.findById(req.user.tenantId),
+      TenantBranding.findOne({ tenantId: req.user.tenantId }).lean(),
+      TenantBillingSettings.findOne({ tenantId: req.user.tenantId }).lean(),
+      InvoicePix.findOne({
+        tenantId: req.user.tenantId,
+        invoiceId: invoice._id
+      })
+        .sort({ createdAt: -1 })
+        .lean(),
+      PaymentGatewayTransaction.findOne({
+        tenantId: req.user.tenantId,
+        invoiceId: invoice._id,
+        gateway: "mercadopago",
+        method: "boleto"
+      })
+        .sort({ createdAt: -1 })
+        .lean()
+    ]);
+
+  if (!associate || !tenant) {
+    return res.status(404).json({
+      ok: false,
+      message: "Dados da associação ou do associado não encontrados."
+    });
+  }
+
+  const pdf = await generateInvoicePdf({
+    invoice,
+    associate,
+    tenant,
+    branding: branding || {},
+    billingSettings: billingSettings || {},
+    invoicePix,
+    boletoTransaction
+  });
+
+  invoice.pdfUrl = pdf.relativePath;
+  await invoice.save();
+
+  return res.json({
+    ok: true,
+    pdf
+  });
+});
+
+router.get("/:id/pdf", auth, async (req, res) => {
+  const invoice = await Invoice.findOne({
+    _id: req.params.id,
+    tenantId: req.user.tenantId
+  });
+
+  if (!invoice || !invoice.pdfUrl) {
+    return res.status(404).json({
+      ok: false,
+      message: "PDF não encontrado."
+    });
+  }
+
+  const filePath = path.resolve(
+    process.cwd(),
+    "..",
+    invoice.pdfUrl.replace(/^\//, "")
+  );
+
+  return res.sendFile(filePath);
+});
+
+module.exports = router;

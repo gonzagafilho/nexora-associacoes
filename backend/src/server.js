@@ -1,0 +1,16 @@
+const app = require("./app");
+const { port } = require("./config/env");
+const { connectDatabase } = require("./config/database");
+
+async function bootstrap() {
+  await connectDatabase();
+
+  app.listen(port, () => {
+    console.log(`[api] Associacao BolePix rodando na porta ${port}`);
+  });
+}
+
+bootstrap().catch((error) => {
+  console.error("[api] erro ao iniciar", error);
+  process.exit(1);
+});
