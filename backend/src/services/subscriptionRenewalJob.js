@@ -114,6 +114,7 @@ async function createRenewalPayment(subscription, now) {
     plan: PROFESSIONAL_PLAN,
     gateway: "mercadopago",
     method: "pix",
+    source: "renewal",
     externalId: String(payment.id),
     gatewayPaymentId: String(payment.id),
     externalReference,
