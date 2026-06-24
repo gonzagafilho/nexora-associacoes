@@ -11,6 +11,7 @@ const financialTransactionSchema = new mongoose.Schema(
     paidAt: { type: Date },
     status: { type: String, enum: ["pending", "paid", "cancelled", "overdue"], default: "pending", index: true },
     paymentMethod: { type: String, enum: ["pix", "cash", "bank_transfer", "card", "boleto", "other"], default: "other" },
+    projectId: { type: mongoose.Schema.Types.ObjectId, ref: "Project", index: true },
     referenceType: { type: String, enum: ["invoice", "manual", "supplier", "adjustment"], default: "manual", index: true },
     referenceId: { type: mongoose.Schema.Types.ObjectId, index: true },
     supplierName: { type: String, trim: true },
@@ -24,5 +25,6 @@ financialTransactionSchema.index({ tenantId: 1, type: 1, status: 1 });
 financialTransactionSchema.index({ tenantId: 1, dueDate: 1 });
 financialTransactionSchema.index({ tenantId: 1, createdAt: -1 });
 financialTransactionSchema.index({ tenantId: 1, referenceType: 1, referenceId: 1 });
+financialTransactionSchema.index({ tenantId: 1, projectId: 1, status: 1, type: 1 });
 
 module.exports = mongoose.model("FinancialTransaction", financialTransactionSchema);

@@ -3,6 +3,8 @@ const { buildMonthlyFinancialReport } = require("../../services/financial/monthl
 const { generateMonthlyFinancialReportPdf } = require("../../services/financial/monthlyFinancialReportPdfService");
 const auth = require("../../middlewares/auth");
 const FinancialTransaction = require("../../models/FinancialTransaction");
+const Project = require("../../models/Project");
+const { syncProjectSpent } = require("../../services/projects/projectService");
 
 const router = express.Router();
 
@@ -75,6 +77,12 @@ function buildPayload(req, existing = {}) {
   const referenceId = req.body?.referenceId !== undefined
     ? normalizeObjectId(req.body.referenceId) || undefined
     : existing.referenceId;
+  const projectIdInput = req.body?.projectId !== undefined ? req.body.projectId : existing.projectId;
+  const projectId = projectIdInput ? normalizeObjectId(projectIdInput) : undefined;
+  if (req.body?.projectId !== undefined && req.body.projectId && !projectId) {
+    throw createHttpError("Projeto inválido.");
+  }
+  if (projectId && type !== "expense") throw createHttpError("Projeto só pode ser vinculado a saídas.");
 
   return {
     type,
@@ -85,11 +93,24 @@ function buildPayload(req, existing = {}) {
     paidAt: status === "paid" && !paidAt ? new Date() : paidAt,
     status,
     paymentMethod,
+    projectId,
     referenceType,
     referenceId,
     supplierName: String(req.body?.supplierName ?? existing.supplierName ?? "").trim(),
     notes: String(req.body?.notes ?? existing.notes ?? "").trim()
   };
+}
+
+async function validateProjectForTenant(tenantId, projectId) {
+  if (!projectId) return null;
+  const project = await Project.findOne({ _id: projectId, tenantId });
+  if (!project) throw createHttpError("Projeto não encontrado.", 404);
+  return project;
+}
+
+async function syncAffectedProjects(tenantId, ...projectIds) {
+  const unique = [...new Set(projectIds.map((value) => normalizeObjectId(value)).filter(Boolean))];
+  await Promise.all(unique.map((projectId) => syncProjectSpent({ tenantId, projectId })));
 }
 
 function validateRequired(payload) {
@@ -136,6 +157,7 @@ function serialize(transaction) {
     paidAt: transaction.paidAt || null,
     status: transaction.status,
     paymentMethod: transaction.paymentMethod,
+    projectId: transaction.projectId || null,
     referenceType: transaction.referenceType,
     referenceId: transaction.referenceId || null,
     supplierName: transaction.supplierName || "",
@@ -227,9 +249,11 @@ router.post("/transactions", auth, async (req, res) => {
   try {
     const payload = buildPayload(req);
     validateRequired(payload);
+    await validateProjectForTenant(req.user.tenantId, payload.projectId);
     payload.tenantId = req.user.tenantId;
     payload.createdBy = req.user.id;
     const transaction = await FinancialTransaction.create(payload);
+    await syncAffectedProjects(req.user.tenantId, payload.projectId);
     return res.status(201).json({ ok: true, transaction: serialize(transaction) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao criar transação." });
@@ -241,10 +265,13 @@ router.put("/transactions/:id", auth, async (req, res) => {
     const transaction = await FinancialTransaction.findOne({ _id: req.params.id, tenantId: req.user.tenantId });
     if (!transaction) return res.status(404).json({ ok: false, message: "Transação não encontrada." });
     if (transaction.status === "cancelled") return res.status(409).json({ ok: false, message: "Transação cancelada não pode ser alterada." });
+    const previousProjectId = transaction.projectId;
     const payload = buildPayload(req, transaction);
     validateRequired(payload);
+    await validateProjectForTenant(req.user.tenantId, payload.projectId);
     Object.assign(transaction, payload);
     await transaction.save();
+    await syncAffectedProjects(req.user.tenantId, previousProjectId, transaction.projectId);
     return res.json({ ok: true, transaction: serialize(transaction) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao atualizar transação." });
@@ -259,6 +286,7 @@ router.post("/transactions/:id/pay", auth, async (req, res) => {
   transaction.paidAt = req.body?.paidAt ? new Date(req.body.paidAt) : new Date();
   if (req.body?.paymentMethod && PAYMENT_METHODS.has(req.body.paymentMethod)) transaction.paymentMethod = req.body.paymentMethod;
   await transaction.save();
+  await syncAffectedProjects(req.user.tenantId, transaction.projectId);
   return res.json({ ok: true, transaction: serialize(transaction) });
 });
 
@@ -267,6 +295,7 @@ router.post("/transactions/:id/cancel", auth, async (req, res) => {
   if (!transaction) return res.status(404).json({ ok: false, message: "Transação não encontrada." });
   transaction.status = "cancelled";
   await transaction.save();
+  await syncAffectedProjects(req.user.tenantId, transaction.projectId);
   return res.json({ ok: true, transaction: serialize(transaction) });
 });
 

@@ -14,6 +14,7 @@ const state = {
   saasAuditFilters: { q: "", scope: "", action: "", status: "", dateFrom: "", dateTo: "", page: 1, limit: 10 },
   financialFilters: { q: "", type: "", status: "", category: "", dateFrom: "", dateTo: "", page: 1, limit: 10 },
   financialReportMonth: new Date().toISOString().slice(0, 7),
+  projectFilters: { q: "", status: "", type: "" },
   saasPayments: [],
   saasAudit: [],
   financialTransactions: []
@@ -33,6 +34,7 @@ const icons = {
   receipt: "M6 2h12v20l-3-2-3 2-3-2-3 2V2Zm3 6h6m-6 4h6m-6 4h4",
   card: "M3 5h18v14H3V5Zm0 5h18M7 15h3",
   settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0-13v2m0 15v2m9.5-9.5h-2m-15 0h-2m16.2-6.2-1.4 1.4M6.7 17.3l-1.4 1.4m13.4 0-1.4-1.4M6.7 6.7 5.3 5.3",
+  projects: "M3 21h18M5 21V7l7-4 7 4v14M9 10h6M9 14h6",
   logout: "M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4",
   menu: "M4 6h16M4 12h16M4 18h16",
   saas: "M4 7h16M4 12h16M4 17h10m4-10v10M8 7v10",
@@ -47,10 +49,12 @@ function date(value) { return value ? new Intl.DateTimeFormat("pt-BR").format(ne
 function dateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—"; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function toast(message, error = false) { const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; toastRoot.append(el); setTimeout(() => el.remove(), 4200); }
-function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
+function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando", planning: "Planejamento", paused: "Pausado", completed: "Concluído" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
 function field(name, label, value = "", type = "text", required = false, extra = "") { return `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${extra}></label>`; }
 function selectField(name, label, options, value) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${options.map(([key, text]) => `<option value="${key}" ${key === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`; }
 function statusFilter(value = "") { return `<select class="select" data-filter-status style="max-width:190px"><option value="">Todos os status</option><option value="pending" ${value === "pending" ? "selected" : ""}>Pendentes</option><option value="paid" ${value === "paid" ? "selected" : ""}>Pagas</option><option value="overdue" ${value === "overdue" ? "selected" : ""}>Vencidas</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Canceladas</option></select>`; }
+function projectTypeOptions(value = "projeto") { return `<label class="field"><span>Tipo</span><select class="select" name="type"><option value="obra" ${value === "obra" ? "selected" : ""}>Obra</option><option value="projeto" ${value === "projeto" ? "selected" : ""}>Projeto</option><option value="evento" ${value === "evento" ? "selected" : ""}>Evento</option><option value="campanha" ${value === "campanha" ? "selected" : ""}>Campanha</option><option value="outro" ${value === "outro" ? "selected" : ""}>Outro</option></select></label>`; }
+function projectStatusOptions(value = "planning") { return `<label class="field"><span>Status</span><select class="select" name="status"><option value="planning" ${value === "planning" ? "selected" : ""}>Planejamento</option><option value="active" ${value === "active" ? "selected" : ""}>Ativo</option><option value="paused" ${value === "paused" ? "selected" : ""}>Pausado</option><option value="completed" ${value === "completed" ? "selected" : ""}>Concluído</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Cancelado</option></select></label>`; }
 
 function normalizeColor(value, fallback) { const color = String(value || "").trim(); return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback; }
 function currentTenantName() { return state.tenant?.name || state.me?.tenant?.name || "Nexora Gestão"; }
@@ -111,7 +115,7 @@ function renderLogin() {
 
 const navItems = [
   ["dashboard", "Dashboard", "dashboard"], ["associados", "Associados", "users"], ["mensalidades", "Mensalidades", "calendar"],
-  ["cobrancas", "Cobranças", "receipt"], ["financeiro", "Financeiro", "card"], ["mercadopago", "Mercado Pago", "card"], ["saas", "SaaS", "saas"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
+  ["cobrancas", "Cobranças", "receipt"], ["projetos", "Projetos", "projects"], ["financeiro", "Financeiro", "card"], ["mercadopago", "Mercado Pago", "card"], ["saas", "SaaS", "saas"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
 ];
 function shellHtml() {
   const branding = resolveBranding(); applyBrandingTheme(branding);
@@ -133,7 +137,7 @@ function pageHead(title, subtitle, actions = "") { return `<header class="page-h
 async function renderRoute() {
   loading();
   try {
-    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
+    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
     await (routes[state.route] || renderDashboard)();
   } catch (error) { content().innerHTML = `<div class="card empty">Não foi possível carregar esta tela.<br><small>${escapeHtml(error.message)}</small></div>`; toast(error.message, true); }
 }
@@ -177,6 +181,158 @@ function viewInvoice(invoice) { openModal("Detalhes da cobrança", `<div class="
 async function generatePix(id) { try { const result = await api(`/api/pix/invoices/${id}/mercadopago`, { method: "POST" }); const pix = result.invoicePix || result.transaction || result; const code = pix.pixCopyPaste || pix.qrCode || result.transaction?.qrCode || ""; openModal("PIX gerado", `<p>PIX criado com sucesso.</p><div class="pix-code">${escapeHtml(code)}</div><div class="actions" style="margin-top:14px"><button class="button button-primary" data-copy-pix>Copiar PIX</button></div>`, null, "Fechar"); document.querySelector("[data-copy-pix]")?.addEventListener("click", async () => { await navigator.clipboard.writeText(code); toast("PIX copiado."); }); } catch (error) { toast(error.message, true); } }
 async function generateBoleto(id) { try { const result = await api(`/api/invoices/${id}/boleto/mercadopago`, { method: "POST" }); const boleto = result.boleto || result.transaction; openModal("Boleto gerado", `<div class="detail-grid"><div class="detail-item"><small>Valor original</small>${money(boleto.originalAmount)}</div><div class="detail-item"><small>Taxa</small>${money(boleto.feeAmount)}</div><div class="detail-item"><small>Total</small>${money(boleto.totalAmount)}</div></div><div class="actions" style="margin-top:18px">${boleto.boletoUrl ? `<a class="button button-primary" target="_blank" href="${escapeHtml(boleto.boletoUrl)}">Abrir boleto</a>` : ""}</div>`, null, "Fechar"); } catch (error) { toast(error.message, true); } }
 async function downloadPdf(id) { try { await api(`/api/invoices/${id}/pdf`, { method: "POST" }); const response = await fetch(`/api/invoices/${id}/pdf`, { headers: { Authorization: `Bearer ${state.token}` } }); if (!response.ok) throw new Error("Não foi possível baixar o PDF."); const blob = await response.blob(); const url = URL.createObjectURL(blob); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 60000); } catch (error) { toast(error.message, true); } }
+
+function projectTypeLabel(type) { const labels = { obra: "Obra", projeto: "Projeto", evento: "Evento", campanha: "Campanha", outro: "Outro" }; return labels[type] || type || "—"; }
+function projectStatusLabel(status) { const labels = { planning: "Planejamento", active: "Ativo", paused: "Pausado", completed: "Concluído", cancelled: "Cancelado" }; return labels[status] || status || "—"; }
+function projectBudgetCategoryLabel(category) { const labels = { mao_de_obra: "Mão de obra", material: "Material", servico: "Serviço", equipamento: "Equipamento", deslocamento: "Deslocamento", outro: "Outro" }; return labels[category] || "Outro"; }
+function projectTypeFilter(value = "") { return `<select class="select" data-project-type style="max-width:180px"><option value="">Todos os tipos</option><option value="obra" ${value === "obra" ? "selected" : ""}>Obra</option><option value="projeto" ${value === "projeto" ? "selected" : ""}>Projeto</option><option value="evento" ${value === "evento" ? "selected" : ""}>Evento</option><option value="campanha" ${value === "campanha" ? "selected" : ""}>Campanha</option><option value="outro" ${value === "outro" ? "selected" : ""}>Outro</option></select>`; }
+function projectStatusFilter(value = "") { return `<select class="select" data-project-status style="max-width:190px"><option value="">Todos os status</option><option value="planning" ${value === "planning" ? "selected" : ""}>Planejamento</option><option value="active" ${value === "active" ? "selected" : ""}>Ativos</option><option value="paused" ${value === "paused" ? "selected" : ""}>Pausados</option><option value="completed" ${value === "completed" ? "selected" : ""}>Concluídos</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Cancelados</option></select>`; }
+function projectSelectField(projects = [], selected = "") { return `<label class="field"><span>Projeto</span><select class="select" name="projectId"><option value="">Sem vínculo</option>${projects.map((project) => `<option value="${project.id}" ${String(project.id) === String(selected || "") ? "selected" : ""}>${escapeHtml(project.name)} • ${escapeHtml(projectStatusLabel(project.status))}</option>`).join("")}</select></label>`; }
+function projectBudgetCategorySelect(value = "outro") { return `<select class="select" data-budget-field="category"><option value="mao_de_obra" ${value === "mao_de_obra" ? "selected" : ""}>Mão de obra</option><option value="material" ${value === "material" ? "selected" : ""}>Material</option><option value="servico" ${value === "servico" ? "selected" : ""}>Serviço</option><option value="equipamento" ${value === "equipamento" ? "selected" : ""}>Equipamento</option><option value="deslocamento" ${value === "deslocamento" ? "selected" : ""}>Deslocamento</option><option value="outro" ${value === "outro" ? "selected" : ""}>Outro</option></select>`; }
+function projectBudgetNumber(value) { const num = Number(value); return Number.isFinite(num) ? num : 0; }
+function normalizeProjectBudgetItem(item = {}) {
+  return {
+    description: String(item.description || ""),
+    category: String(item.category || "outro"),
+    quantity: projectBudgetNumber(item.quantity || 0),
+    unit: String(item.unit || "unidade"),
+    unitMaterialCost: projectBudgetNumber(item.unitMaterialCost || 0),
+    unitLaborCost: projectBudgetNumber(item.unitLaborCost || 0),
+    salePrice: item.salePrice === "" || item.salePrice === null || item.salePrice === undefined ? null : projectBudgetNumber(item.salePrice),
+    notes: String(item.notes || "")
+  };
+}
+function normalizeProjectBudgetItems(items = []) { return Array.isArray(items) ? items.map((item) => normalizeProjectBudgetItem(item)) : []; }
+function calculateProjectBudgetTotals(items = []) {
+  const totals = (items || []).reduce((acc, raw) => {
+    const item = normalizeProjectBudgetItem(raw);
+    const material = Number((item.quantity * item.unitMaterialCost).toFixed(2));
+    const labor = Number((item.quantity * item.unitLaborCost).toFixed(2));
+    const cost = Number((material + labor).toFixed(2));
+    const sale = item.salePrice === null ? cost : Number(Number(item.salePrice || 0).toFixed(2));
+    const profit = Number((sale - cost).toFixed(2));
+    acc.materialTotal += material;
+    acc.laborTotal += labor;
+    acc.costTotal += cost;
+    acc.saleTotal += sale;
+    acc.profitTotal += profit;
+    return acc;
+  }, { materialTotal: 0, laborTotal: 0, costTotal: 0, saleTotal: 0, profitTotal: 0 });
+  totals.materialTotal = Number(totals.materialTotal.toFixed(2));
+  totals.laborTotal = Number(totals.laborTotal.toFixed(2));
+  totals.costTotal = Number(totals.costTotal.toFixed(2));
+  totals.saleTotal = Number(totals.saleTotal.toFixed(2));
+  totals.profitTotal = Number(totals.profitTotal.toFixed(2));
+  totals.profitMarginPercent = totals.saleTotal > 0 ? Number(((totals.profitTotal / totals.saleTotal) * 100).toFixed(2)) : 0;
+  return totals;
+}
+function projectBudgetItemRow(item, index) {
+  return `<tr data-budget-row="${index}"><td><input class="input" data-budget-field="description" value="${escapeHtml(item.description || "")}" placeholder="Descrição"></td><td>${projectBudgetCategorySelect(item.category || "outro")}</td><td><input class="input" type="number" step="0.01" min="0" data-budget-field="quantity" value="${escapeHtml(item.quantity || 0)}"></td><td><input class="input" data-budget-field="unit" value="${escapeHtml(item.unit || "unidade")}" placeholder="unidade"></td><td><input class="input" type="number" step="0.01" min="0" data-budget-field="unitMaterialCost" value="${escapeHtml(item.unitMaterialCost || 0)}"></td><td><input class="input" type="number" step="0.01" min="0" data-budget-field="unitLaborCost" value="${escapeHtml(item.unitLaborCost || 0)}"></td><td><input class="input" type="number" step="0.01" min="0" data-budget-field="salePrice" value="${item.salePrice === null ? "" : escapeHtml(item.salePrice || 0)}" placeholder="Auto = custo"></td><td><input class="input" data-budget-field="notes" value="${escapeHtml(item.notes || "")}" placeholder="Observação"></td><td><button class="button button-ghost button-sm" type="button" data-remove-budget-item="${index}">Remover</button></td></tr>`;
+}
+function renderProjectBudgetRows(items = []) {
+  if (!items.length) return '<tr><td colspan="9"><span class="cell-sub">Nenhum item no orçamento.</span></td></tr>';
+  return items.map((item, index) => projectBudgetItemRow(item, index)).join("");
+}
+function renderProjectBudgetTotals(totals = {}) {
+  return `<div class="detail-grid"><div class="detail-item"><small>Material</small>${money(totals.materialTotal || 0)}</div><div class="detail-item"><small>Mão de obra</small>${money(totals.laborTotal || 0)}</div><div class="detail-item"><small>Custo total</small>${money(totals.costTotal || 0)}</div><div class="detail-item"><small>Venda total</small>${money(totals.saleTotal || 0)}</div><div class="detail-item"><small>Lucro</small>${money(totals.profitTotal || 0)}</div><div class="detail-item"><small>Margem</small>${Number(totals.profitMarginPercent || 0).toFixed(2)}%</div></div>`;
+}
+function collectProjectBudgetItems(form) {
+  const rows = Array.from(form.querySelectorAll("[data-budget-row]"));
+  return rows.map((row) => normalizeProjectBudgetItem({
+    description: row.querySelector('[data-budget-field="description"]')?.value,
+    category: row.querySelector('[data-budget-field="category"]')?.value,
+    quantity: row.querySelector('[data-budget-field="quantity"]')?.value,
+    unit: row.querySelector('[data-budget-field="unit"]')?.value,
+    unitMaterialCost: row.querySelector('[data-budget-field="unitMaterialCost"]')?.value,
+    unitLaborCost: row.querySelector('[data-budget-field="unitLaborCost"]')?.value,
+    salePrice: row.querySelector('[data-budget-field="salePrice"]')?.value,
+    notes: row.querySelector('[data-budget-field="notes"]')?.value
+  }));
+}
+function bindProjectBudgetEditor(form, initialItems = []) {
+  const body = form.querySelector("[data-budget-body]");
+  const totalsEl = form.querySelector("[data-budget-totals]");
+  const addButton = form.querySelector("[data-add-budget-item]");
+  let items = normalizeProjectBudgetItems(initialItems);
+
+  const render = () => {
+    body.innerHTML = renderProjectBudgetRows(items);
+    totalsEl.innerHTML = renderProjectBudgetTotals(calculateProjectBudgetTotals(items));
+  };
+  const syncTotals = () => {
+    totalsEl.innerHTML = renderProjectBudgetTotals(calculateProjectBudgetTotals(collectProjectBudgetItems(form)));
+  };
+
+  addButton?.addEventListener("click", () => {
+    items = collectProjectBudgetItems(form);
+    items.push(normalizeProjectBudgetItem({ description: "", category: "outro", quantity: 1, unit: "unidade", unitMaterialCost: 0, unitLaborCost: 0, salePrice: null, notes: "" }));
+    render();
+  });
+
+  body.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-budget-item]");
+    if (!button) return;
+    const index = Number(button.dataset.removeBudgetItem || -1);
+    items = collectProjectBudgetItems(form);
+    if (index < 0 || index >= items.length) return;
+    items.splice(index, 1);
+    render();
+  });
+
+  body.addEventListener("input", syncTotals);
+  body.addEventListener("change", syncTotals);
+  render();
+}
+function renderProjectBudgetReport(items = []) {
+  if (!items.length) return '<div class="card empty">Nenhum item de orçamento cadastrado.</div>';
+  return '<div class="table-wrap"><table class="table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Qtd</th><th>Un.</th><th>Material</th><th>Mão de obra</th><th>Custo</th><th>Venda</th><th>Lucro</th></tr></thead><tbody>' +
+    items.map((item) => '<tr><td><div class="cell-title">' + escapeHtml(item.description || "—") + '</div><div class="cell-sub">' + escapeHtml(item.notes || "") + '</div></td><td>' + escapeHtml(projectBudgetCategoryLabel(item.category)) + '</td><td>' + Number(item.quantity || 0) + '</td><td>' + escapeHtml(item.unit || "unidade") + '</td><td>' + money(item.totalMaterialCost || 0) + '</td><td>' + money(item.totalLaborCost || 0) + '</td><td>' + money(item.totalCost || 0) + '</td><td>' + money(item.salePrice || 0) + '</td><td>' + money(item.profit || 0) + '</td></tr>').join("") +
+    '</tbody></table></div>';
+}
+
+async function renderProjects() {
+  const [dashboard, list] = await Promise.all([api("/api/projects/dashboard"), api("/api/projects")]);
+  let projects = list.projects || [];
+  const q = String(state.projectFilters.q || "").toLowerCase();
+  const status = state.projectFilters.status || "";
+  const type = state.projectFilters.type || "";
+  projects = projects.filter((item) => (!status || item.status === status) && (!type || item.type === type) && (!q || `${item.name} ${item.description} ${item.responsibleName} ${item.location}`.toLowerCase().includes(q)));
+  content().innerHTML = `${pageHead("Projetos", "Obras, eventos e campanhas por tenant.", '<button class="button button-primary" data-new-project>+ Novo projeto</button>')}<section class="metrics">${metric("Total Projetos", dashboard.totalProjects || 0)}${metric("Ativos", dashboard.activeProjects || 0, "Em execução", true)}${metric("Concluídos", dashboard.completedProjects || 0)}${metric("Pausados", dashboard.pausedProjects || 0)}${metric("Orçamento Total", money(dashboard.totalBudget || 0), "Planejado", true)}${metric("Custo Previsto", money(dashboard.costTotal || 0), "Itens de orçamento")}${metric("Venda Prevista", money(dashboard.saleTotal || 0), "Comercial", true)}${metric("Lucro Previsto", money(dashboard.profitTotal || 0), `${Number(dashboard.profitMarginPercent || 0).toFixed(2)}%`, true)}${metric("Gasto Total", money(dashboard.totalSpent || 0), "Despesas pagas")}</section><section class="card" style="margin-top:16px"><div class="toolbar"><input class="input" data-project-search placeholder="Buscar por nome, responsável ou local" value="${escapeHtml(state.projectFilters.q || "")}">${projectTypeFilter(state.projectFilters.type)}${projectStatusFilter(state.projectFilters.status)}</div><div data-project-table>${renderProjectsTable(projects)}</div></section>`;
+  bindProjects(projects);
+}
+
+function renderProjectsTable(projects = []) {
+  if (!projects.length) return '<div class="card empty">Nenhum projeto encontrado.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Nome</th><th>Tipo</th><th>Status</th><th>Responsável</th><th>Orçamento</th><th>Custo previsto</th><th>Venda prevista</th><th>Lucro previsto</th><th>Gasto real</th><th>Início</th><th>Fim</th><th>Ações</th></tr></thead><tbody>${projects.map((project) => `<tr><td><div class="cell-title">${escapeHtml(project.name)}</div><div class="cell-sub">${escapeHtml(project.location || project.description || "—")}</div></td><td>${escapeHtml(projectTypeLabel(project.type))}</td><td>${badge(project.status)}</td><td><div class="cell-title">${escapeHtml(project.responsibleName || "—")}</div><div class="cell-sub">${escapeHtml(project.responsiblePhone || "")}</div></td><td>${money(project.budget)}</td><td>${money(project.costTotal || 0)}</td><td>${money(project.saleTotal || 0)}</td><td><div class="cell-title">${money(project.profitTotal || 0)}</div><div class="cell-sub">${Number(project.profitMarginPercent || 0).toFixed(2)}%</div></td><td>${money(project.spent)}</td><td>${date(project.startDate)}</td><td>${date(project.endDate)}</td><td><div class="row-actions"><button class="button button-secondary button-sm" data-edit-project="${project.id}">Editar</button><button class="button button-secondary button-sm" data-report-project="${project.id}">Relatório</button>${project.status !== "completed" ? `<button class="button button-ghost button-sm" data-complete-project="${project.id}">Concluir</button>` : ""}${project.status !== "cancelled" ? `<button class="button button-ghost button-sm" data-cancel-project="${project.id}">Cancelar</button>` : ""}<button class="button button-danger button-sm" data-delete-project="${project.id}">Excluir</button></div></td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function bindProjects(projects = []) {
+  content().querySelector("[data-new-project]")?.addEventListener("click", () => openProjectModal());
+  content().querySelector("[data-project-search]")?.addEventListener("input", async (event) => { state.projectFilters.q = event.currentTarget.value; await renderProjects(); });
+  content().querySelector("[data-project-type]")?.addEventListener("change", async (event) => { state.projectFilters.type = event.currentTarget.value; await renderProjects(); });
+  content().querySelector("[data-project-status]")?.addEventListener("change", async (event) => { state.projectFilters.status = event.currentTarget.value; await renderProjects(); });
+  content().querySelectorAll("[data-edit-project]").forEach((button) => button.addEventListener("click", async () => { const result = await api(`/api/projects/${button.dataset.editProject}`); openProjectModal(result.project); }));
+  content().querySelectorAll("[data-report-project]").forEach((button) => button.addEventListener("click", async () => { const report = await api(`/api/projects/${button.dataset.reportProject}/report`); openProjectReport(report); }));
+  content().querySelectorAll("[data-complete-project]").forEach((button) => button.addEventListener("click", async () => { await api(`/api/projects/${button.dataset.completeProject}/complete`, { method: "POST" }); toast("Projeto concluído."); await renderProjects(); }));
+  content().querySelectorAll("[data-cancel-project]").forEach((button) => button.addEventListener("click", async () => { await api(`/api/projects/${button.dataset.cancelProject}/cancel`, { method: "POST" }); toast("Projeto cancelado."); await renderProjects(); }));
+  content().querySelectorAll("[data-delete-project]").forEach((button) => button.addEventListener("click", async () => { if (!confirm("Deseja excluir este projeto?")) return; await api(`/api/projects/${button.dataset.deleteProject}`, { method: "DELETE" }); toast("Projeto excluído."); await renderProjects(); }));
+}
+
+function openProjectModal(project = {}) {
+  const isEdit = Boolean(project.id);
+  const items = normalizeProjectBudgetItems(project.budgetItems || []);
+  const totals = calculateProjectBudgetTotals(items);
+  openModal(isEdit ? "Editar projeto" : "Novo projeto", `<form data-project-form><div class="form-grid">${field("name", "Nome", project.name || "", "text", true)}${projectTypeOptions(project.type || "projeto")}${projectStatusOptions(project.status || "planning")}${field("responsibleName", "Responsável", project.responsibleName || "")}${field("responsiblePhone", "Telefone", project.responsiblePhone || "", "tel")}${field("location", "Local", project.location || "")}${field("budget", "Orçamento", project.budget ?? "", "number", false, 'step="0.01" min="0"')}${field("startDate", "Data início", inputDateValue(project.startDate), "date")}${field("endDate", "Data fim", inputDateValue(project.endDate), "date")}<label class="field span-2"><span>Descrição</span><textarea class="textarea" name="description">${escapeHtml(project.description || "")}</textarea></label><label class="field span-2"><span>Observações</span><textarea class="textarea" name="notes">${escapeHtml(project.notes || "")}</textarea></label><section class="field span-2"><div class="saas-list-head" style="margin-bottom:8px"><div><h3>Orçamento</h3><p>Itens comerciais e operacionais do projeto.</p></div><button class="button button-secondary button-sm" type="button" data-add-budget-item>Adicionar item</button></div><div class="table-wrap"><table class="table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Quantidade</th><th>Unidade</th><th>Material unitário</th><th>Mão de obra unitária</th><th>Preço de venda</th><th>Observação</th><th>Ação</th></tr></thead><tbody data-budget-body>${renderProjectBudgetRows(items)}</tbody></table></div><div data-budget-totals style="margin-top:10px">${renderProjectBudgetTotals(totals)}</div></section></div></form>`, async () => { const form = document.querySelector("[data-project-form]"); if (!form.reportValidity()) return false; const fd = new FormData(form); const budgetItems = collectProjectBudgetItems(form); const budgetValue = String(fd.get("budget") || "").trim(); await api(isEdit ? `/api/projects/${project.id}` : "/api/projects", { method: isEdit ? "PUT" : "POST", body: JSON.stringify({ name: fd.get("name"), type: fd.get("type"), status: fd.get("status"), responsibleName: fd.get("responsibleName"), responsiblePhone: fd.get("responsiblePhone"), location: fd.get("location"), budget: budgetValue ? Number(budgetValue) : undefined, budgetItems, startDate: fd.get("startDate"), endDate: fd.get("endDate"), description: fd.get("description"), notes: fd.get("notes") }) }); toast(isEdit ? "Projeto atualizado." : "Projeto criado."); await renderProjects(); }, "Cancelar", isEdit ? "Salvar projeto" : "Criar projeto");
+  const form = document.querySelector("[data-project-form]");
+  if (form) bindProjectBudgetEditor(form, items);
+}
+
+function openProjectReport(report) {
+  const project = report.project || {};
+  const summary = report.summary || {};
+  const budgetItems = report.budget?.items || project.budgetItems || [];
+  openModal("Relatório do projeto", `<div class="detail-grid"><div class="detail-item"><small>Projeto</small>${escapeHtml(project.name || "—")}</div><div class="detail-item"><small>Tipo</small>${escapeHtml(projectTypeLabel(project.type))}</div><div class="detail-item"><small>Status</small>${badge(project.status || "planning")}</div><div class="detail-item"><small>Orçamento</small>${money(summary.totalBudget || 0)}</div><div class="detail-item"><small>Total material</small>${money(summary.materialTotal || 0)}</div><div class="detail-item"><small>Total mão de obra</small>${money(summary.laborTotal || 0)}</div><div class="detail-item"><small>Custo total</small>${money(summary.costTotal || 0)}</div><div class="detail-item"><small>Valor de venda</small>${money(summary.saleTotal || 0)}</div><div class="detail-item"><small>Lucro previsto</small>${money(summary.profitTotal || 0)}</div><div class="detail-item"><small>Margem prevista</small>${Number(summary.profitMarginPercent || 0).toFixed(2)}%</div><div class="detail-item"><small>Despesas reais vinculadas</small>${money(summary.totalSpent || 0)}</div><div class="detail-item"><small>Lucro estimado x gasto real</small>${money(summary.estimatedProfitVsRealSpend || 0)}</div><div class="detail-item"><small>Diferença custo previsto x real</small>${money(summary.costVarianceVsRealSpend || 0)}</div><div class="detail-item"><small>Despesas pagas</small>${Number(summary.paidExpenses || 0)}</div><div class="detail-item"><small>Despesas pendentes</small>${Number(summary.pendingExpenses || 0)}</div><div class="detail-item"><small>Total despesas</small>${Number(summary.expenseCount || 0)}</div></div><h3 style="margin:16px 0 10px">Orçamento detalhado</h3>${renderProjectBudgetReport(budgetItems)}<h3 style="margin:16px 0 10px">Despesas reais vinculadas</h3>${renderReportTransactions((report.expenses || []).map((item) => ({ ...item, type: "expense" })))}`, null, "Fechar");
+}
 
 
 function financialQuery() {
@@ -302,8 +458,9 @@ async function downloadFinancialReport(month) {
   }
 }
 
-function openFinancialModal(type = "income", transaction = {}) {
+async function openFinancialModal(type = "income", transaction = {}) {
   const isExpense = type === "expense";
+  const projects = isExpense ? ((await api("/api/projects")).projects || []).filter((item) => item.status !== "cancelled") : [];
   openModal(isExpense ? "Nova saída" : "Nova entrada", '<form data-financial-form><div class="form-grid">' +
     '<input type="hidden" name="type" value="' + escapeHtml(type) + '">' +
     field("category", "Categoria", transaction.category || (isExpense ? "Fornecedores" : "Mensalidades"), "text", true) +
@@ -311,6 +468,7 @@ function openFinancialModal(type = "income", transaction = {}) {
     field("description", "Descrição", transaction.description || "", "text", true) +
     field("dueDate", "Vencimento", inputDateValue(transaction.dueDate) || new Date().toISOString().slice(0, 10), "date", true) +
     selectField("paymentMethod", "Forma de pagamento", [["pix", "PIX"], ["cash", "Dinheiro"], ["bank_transfer", "Transferência"], ["card", "Cartão"], ["boleto", "Boleto"], ["other", "Outro"]], transaction.paymentMethod || "other") +
+    (isExpense ? projectSelectField(projects, transaction.projectId) : "") +
     field("supplierName", "Fornecedor", transaction.supplierName || "", "text", false) +
     '<label class="field span-2"><span>Observação</span><textarea class="textarea" name="notes">' + escapeHtml(transaction.notes || "") + '</textarea></label>' +
     '</div></form>', async () => {
@@ -326,6 +484,7 @@ function openFinancialModal(type = "income", transaction = {}) {
           amount: Number(fd.get("amount") || 0),
           dueDate: fd.get("dueDate"),
           paymentMethod: fd.get("paymentMethod"),
+          projectId: fd.get("projectId") || "",
           supplierName: fd.get("supplierName"),
           notes: fd.get("notes"),
           referenceType: isExpense ? "supplier" : "manual"
