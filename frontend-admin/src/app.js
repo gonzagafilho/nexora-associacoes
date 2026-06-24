@@ -24,6 +24,8 @@ const state = {
     loading: false,
     summary: { critical: 0, today: 0, week: 0, smartAlertsToday: 0 }
   },
+  pwa: { installPrompt: null, canInstall: false },
+  businessType: localStorage.getItem("nexora_business_type") || "association",
   saasPayments: [],
   saasAudit: [],
   financialTransactions: []
@@ -37,6 +39,13 @@ const DEFAULT_BRANDING = Object.freeze({
 });
 
 const REQUIRED_MODULE_CODES = ["core", "financial"];
+const BUSINESS_TYPE_PRESETS = {
+  association: ["core", "financial", "associates", "memberbilling", "protocols"],
+  company: ["core", "financial", "projects", "assets", "protocols"],
+  condominium: ["core", "financial", "protocols"],
+  ngo: ["core", "financial", "associates", "protocols"],
+  construction: ["core", "financial", "projects", "assets", "protocols"]
+};
 const FALLBACK_SAAS_MODULES = [
   { code: "core", name: "Core", description: "Plataforma base", monthlyPrice: 49.9, active: true },
   { code: "financial", name: "Financeiro", description: "Fluxo financeiro", monthlyPrice: 0, active: true },
@@ -112,6 +121,9 @@ function selectField(name, label, options, value) { return `<label class="field"
 function statusFilter(value = "") { return `<select class="select" data-filter-status style="max-width:190px"><option value="">Todos os status</option><option value="pending" ${value === "pending" ? "selected" : ""}>Pendentes</option><option value="paid" ${value === "paid" ? "selected" : ""}>Pagas</option><option value="overdue" ${value === "overdue" ? "selected" : ""}>Vencidas</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Canceladas</option></select>`; }
 function projectTypeOptions(value = "projeto") { return `<label class="field"><span>Tipo</span><select class="select" name="type"><option value="obra" ${value === "obra" ? "selected" : ""}>Obra</option><option value="projeto" ${value === "projeto" ? "selected" : ""}>Projeto</option><option value="evento" ${value === "evento" ? "selected" : ""}>Evento</option><option value="campanha" ${value === "campanha" ? "selected" : ""}>Campanha</option><option value="outro" ${value === "outro" ? "selected" : ""}>Outro</option></select></label>`; }
 function projectStatusOptions(value = "planning") { return `<label class="field"><span>Status</span><select class="select" name="status"><option value="planning" ${value === "planning" ? "selected" : ""}>Planejamento</option><option value="active" ${value === "active" ? "selected" : ""}>Ativo</option><option value="paused" ${value === "paused" ? "selected" : ""}>Pausado</option><option value="completed" ${value === "completed" ? "selected" : ""}>Concluído</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Cancelado</option></select></label>`; }
+function businessTypeLabel(value = "association") { return ({ association: "Associação", company: "Empresa", condominium: "Condomínio", ngo: "ONG", construction: "Construção" }[value] || value); }
+function businessTypeOptions(value = "association") { return `<label class="field"><span>Tipo de negócio</span><select class="select" name="businessType"><option value="association" ${value === "association" ? "selected" : ""}>Associação</option><option value="company" ${value === "company" ? "selected" : ""}>Empresa</option><option value="condominium" ${value === "condominium" ? "selected" : ""}>Condomínio</option><option value="ngo" ${value === "ngo" ? "selected" : ""}>ONG</option><option value="construction" ${value === "construction" ? "selected" : ""}>Construção</option></select></label>`; }
+function presetModulesForBusinessType(value = "association") { return BUSINESS_TYPE_PRESETS[value] || BUSINESS_TYPE_PRESETS.association; }
 
 function normalizeColor(value, fallback) { const color = String(value || "").trim(); return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback; }
 function currentTenantName() { return state.tenant?.name || state.me?.tenant?.name || "Nexora Gestão"; }
@@ -121,6 +133,119 @@ function persistBranding(branding) { state.branding = resolveBranding(branding);
 function syncSessionBranding(payload = {}) { if (payload.tenant) { state.tenant = { ...(state.tenant || {}), ...payload.tenant }; localStorage.setItem("nexora_tenant", JSON.stringify(state.tenant)); } if (payload.branding) persistBranding(payload.branding); }
 function brandLogoHtml(branding = resolveBranding(), height = 40, className = "") { const src = branding.activeLogoUrl || DEFAULT_BRANDING.activeLogoUrl; return `<img class="${className}" src="${escapeHtml(src)}" style="height:${height}px;width:auto" alt="${escapeHtml(branding.organizationName || "Nexora Gestão")}">`; }
 function logoPreviewOption(mode, label, src, active, hint = "") { return `<label class="logo-option${active ? " active" : ""}"><input type="radio" name="logoMode" value="${mode}" ${active ? "checked" : ""}><div class="logo-preview"><div class="logo-preview-head"><strong>${label}</strong>${hint ? `<small>${hint}</small>` : ""}</div><div class="logo-preview-body">${src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(label)}">` : '<div class="logo-preview-fallback">Sem arquivo</div>'}</div></div></label>`; }
+
+function injectPwaStyles() {
+  if (document.querySelector("#nexora-pwa-styles")) return;
+  const style = document.createElement("style");
+  style.id = "nexora-pwa-styles";
+  style.textContent = `
+    @media (max-width: 1024px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: fixed; inset: 0 auto 0 0; width: min(84vw, 320px); transform: translateX(-105%); transition: transform .25s ease; z-index: 220; }
+      .sidebar.open { transform: translateX(0); }
+      .main { width: 100%; }
+    }
+    @media (max-width: 768px) {
+      .topbar { padding: 12px 14px; gap: 10px; }
+      .topbar .user-menu { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+      .topbar .user-meta { display: none; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .page-head { flex-direction: column; align-items: stretch; }
+      .page-head .actions { justify-content: flex-start; flex-wrap: wrap; }
+      .table-wrap { overflow-x: auto; }
+    }
+    @media (max-width: 420px) {
+      .metrics { grid-template-columns: 1fr; }
+      .content { padding: 14px; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function updatePwaMeta(branding = resolveBranding()) {
+  const themeColor = normalizeColor(branding.primaryColor, "#0f4c81");
+  const brandedIcon = String(branding.activeLogoUrl || "").trim();
+  let themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (!themeMeta) {
+    themeMeta = document.createElement("meta");
+    themeMeta.name = "theme-color";
+    document.head.appendChild(themeMeta);
+  }
+  themeMeta.setAttribute("content", themeColor);
+
+  let manifestLink = document.querySelector('link[rel="manifest"]');
+  if (!manifestLink) {
+    manifestLink = document.createElement("link");
+    manifestLink.rel = "manifest";
+    document.head.appendChild(manifestLink);
+  }
+
+  const manifest = {
+    name: "NEXORA Gestão",
+    short_name: "NEXORA",
+    display: "standalone",
+    theme_color: themeColor,
+    background_color: "#ffffff",
+    orientation: "portrait",
+    start_url: "/",
+    scope: "/",
+    icons: [
+      ...(brandedIcon ? [{ src: brandedIcon, sizes: "192x192", type: "image/png", purpose: "any" }] : []),
+      { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      ...(brandedIcon ? [{ src: brandedIcon, sizes: "512x512", type: "image/png", purpose: "any" }] : []),
+      { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icons/icon-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable any" }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
+  const manifestUrl = URL.createObjectURL(blob);
+  const previousUrl = document.querySelector('link[rel="manifest"]')?.dataset.blobUrl;
+  if (previousUrl) URL.revokeObjectURL(previousUrl);
+  manifestLink.href = manifestUrl;
+  manifestLink.dataset.blobUrl = manifestUrl;
+}
+
+function registerPwaServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  if (window.__nexoraServiceWorkerRegistered) return;
+  window.__nexoraServiceWorkerRegistered = true;
+  const register = async () => {
+    try {
+      await navigator.serviceWorker.register("/service-worker.js");
+    } catch (_error) {
+      // Offline shell still works without registration.
+    }
+  };
+  if (document.readyState === "complete") register();
+  else window.addEventListener("load", register, { once: true });
+}
+
+function wirePwaInstallPrompt() {
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    state.pwa.installPrompt = event;
+    state.pwa.canInstall = true;
+    renderShell();
+  });
+
+  window.addEventListener("appinstalled", () => {
+    state.pwa.installPrompt = null;
+    state.pwa.canInstall = false;
+    toast("NEXORA instalado com sucesso.");
+    renderShell();
+  });
+}
+
+async function triggerPwaInstall() {
+  const prompt = state.pwa.installPrompt;
+  if (!prompt) return;
+  prompt.prompt();
+  const result = await prompt.userChoice;
+  if (result?.outcome !== "accepted") return;
+  state.pwa.installPrompt = null;
+  state.pwa.canInstall = false;
+}
 
 async function api(path, options = {}) {
   try {
@@ -143,6 +268,13 @@ function logout() {
 }
 
 function renderLogin() {
+  injectPwaStyles();
+  updatePwaMeta(resolveBranding());
+  registerPwaServiceWorker();
+  if (!window.__nexoraPwaWired) {
+    wirePwaInstallPrompt();
+    window.__nexoraPwaWired = true;
+  }
   const branding = resolveBranding(); applyBrandingTheme(branding);
   app.innerHTML = `<main class="login-page"><section class="login-hero"><div class="brand brand-hero">${brandLogoHtml(branding, 96, "brand-logo-lg")}<div><small>PLATAFORMA MULTI-TENANT</small><strong>${escapeHtml(branding.organizationName)}</strong></div></div><h1>Gestão inteligente para associações.</h1><p>Cobranças, associados e financeiro em um só lugar.</p><div class="hero-points"><div class="hero-point"><span>✓</span><strong>PIX automático</strong></div><div class="hero-point"><span>✓</span><strong>Boleto e lotérica</strong></div><div class="hero-point"><span>✓</span><strong>Baixa automática</strong></div><div class="hero-point"><span>✓</span><strong>Portal do associado</strong></div><div class="hero-point"><span>✓</span><strong>Multi-tenant</strong></div><div class="hero-point"><span>✓</span><strong>Mercado Pago integrado</strong></div><div class="hero-point"><span>✓</span><strong>PDF Premium</strong></div><div class="hero-point"><span>✓</span><strong>Relatórios financeiros</strong></div></div><div class="pricing-card"><small>Plano Modular</small><strong>7 dias grátis</strong><span>Core a partir de R$ 49,90/mês</span></div><footer class="login-footer"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></footer></section><section class="login-panel"><form class="login-card" data-login><div class="brand brand-card">${brandLogoHtml(branding, 72, "brand-logo-card")}<div><small>NEXORA GESTÃO</small><strong>${escapeHtml(branding.organizationName)}</strong></div></div><h2>Bem-vindo</h2><p>Acesse o painel administrativo da sua organização.</p>${field("email", "E-mail", "", "email", true, 'autocomplete="email"')}${field("password", "Senha", "", "password", true, 'autocomplete="current-password"')}<button class="button button-primary button-block" type="submit">Entrar</button><button class="button button-secondary button-block" data-create-tenant type="button" style="margin-top:12px">Criar Associação</button><div class="login-trial-note">Plano Modular • 7 dias grátis • Valor conforme módulos contratados</div><div class="mp-feedback" data-login-error></div></form></section></main>`;
   app.querySelector("[data-create-tenant]")?.addEventListener("click", openTenantSignupModal);
@@ -167,15 +299,35 @@ async function openTenantSignupModal() {
   }
 
   const requiredCodes = normalizeModuleCodes(catalog.requiredModuleCodes || REQUIRED_MODULE_CODES);
+  const defaultBusinessType = state.businessType || state.tenant?.businessType || "association";
   const modules = (catalog.modules || FALLBACK_SAAS_MODULES)
     .map((item) => ({ ...item, code: normalizeModuleCode(item.code), monthlyPrice: Number(item.monthlyPrice || 0) }))
     .filter((item) => item.code);
+  const presetCodes = new Set(presetModulesForBusinessType(defaultBusinessType));
+  const initialSelected = Array.from(new Set([...requiredCodes, ...presetCodes]));
+  const stepLabels = ["Tipo de negócio", "Módulos", "Branding", "Finalizar"];
 
-  openModal("Criar Associação", `<form data-tenant-form><div class="form-grid">${field("associationName", "Nome da Associação", "", "text", true)}${field("ownerName", "Nome do Responsável", "", "text", true)}${field("phone", "Telefone", "", "tel", true)}${field("email", "E-mail", "", "email", true)}${field("password", "Senha", "", "password", true)}<div class="field span-2"><span>Módulos contratados</span><div class="form-grid">${modules.map((item) => signupModuleRow(item, requiredCodes.includes(item.code))).join("")}</div></div><div class="detail-item span-2" data-signup-total><small>Total mensal</small>${money(calculateSignupTotal(modules, requiredCodes))}</div><div class="detail-item span-2"><small>Trial</small>7 dias com status trialing</div></div></form>`, async () => {
+  openModal("Criar tenant", `<form data-tenant-form class="onboarding-form">
+    <div class="onboarding-steps">${stepLabels.map((label, index) => `<span class="onboarding-step ${index === 0 ? "active" : ""}" data-step-indicator="${index}"><small>${index + 1}</small>${label}</span>`).join("")}</div>
+    <section data-onboarding-step="0"><div class="form-grid">${businessTypeOptions(defaultBusinessType)}${field("associationName", "Nome da organização", "", "text", true)}${field("ownerName", "Nome do responsável", "", "text", true)}${field("phone", "Telefone", "", "tel", true)}${field("email", "E-mail", "", "email", true)}${field("password", "Senha", "", "password", true)}</div></section>
+    <section data-onboarding-step="1" hidden><div class="field"><span>Módulos contratados</span><div class="form-grid">${modules.map((item) => signupModuleRow(item, requiredCodes.includes(item.code) || presetCodes.has(item.code))).join("")}</div></div><div class="detail-item" data-signup-total><small>Total mensal</small>${money(calculateSignupTotal(modules, initialSelected))}</div></section>
+    <section data-onboarding-step="2" hidden><div class="form-grid">${field("brandingPrimaryColor", "Cor principal", "#0ea5e9", "color")}${field("brandingSecondaryColor", "Cor secundária", "#0284c7", "color")}${field("brandingLogoUrl", "URL do logo", "", "url")}<label class="field span-2"><span>Rodapé dos documentos</span><textarea class="textarea" name="brandingDocumentFooter">Documento gerado automaticamente pelo Nexora Gestão.</textarea></label></div></section>
+    <section data-onboarding-step="3" hidden><div class="detail-grid"><div class="detail-item"><small>Perfil de negócio</small><strong data-business-type-label>${businessTypeLabel(defaultBusinessType)}</strong></div><div class="detail-item"><small>Módulos</small><strong data-modules-summary>${formatEnabledModules(initialSelected)}</strong></div><div class="detail-item"><small>Total mensal</small><strong data-total-summary>${money(calculateSignupTotal(modules, initialSelected))}</strong></div><div class="detail-item"><small>Trial</small><strong>7 dias</strong></div></div></section>
+    <div class="modal-step-actions"><button class="button button-ghost" type="button" data-prev-step>Voltar</button><button class="button button-secondary" type="button" data-next-step>Próximo</button></div>
+  </form>`, async () => {
     const form = document.querySelector("[data-tenant-form]");
     if (!form.reportValidity()) return false;
     const data = Object.fromEntries(new FormData(form));
     data.enabledModules = readSignupModules(form);
+    data.branding = {
+      primaryColor: data.brandingPrimaryColor,
+      secondaryColor: data.brandingSecondaryColor,
+      logoUrl: data.brandingLogoUrl,
+      documentFooter: data.brandingDocumentFooter
+    };
+    ["brandingPrimaryColor", "brandingSecondaryColor", "brandingLogoUrl", "brandingDocumentFooter"].forEach((key) => delete data[key]);
+    state.businessType = String(data.businessType || defaultBusinessType);
+    localStorage.setItem("nexora_business_type", state.businessType);
     const result = await apiRequest("/api/public/signup", {
       method: "POST",
       body: JSON.stringify(data)
@@ -184,16 +336,56 @@ async function openTenantSignupModal() {
     state.route = "dashboard";
     location.hash = "dashboard";
     await renderShell();
-  }, "Cancelar", "Criar minha associação");
+  }, "Cancelar", "Finalizar");
 
-  const form = document.querySelector("[data-tenant-form]");
-  const totalEl = document.querySelector("[data-signup-total]");
-  const refreshTotal = () => {
-    totalEl.innerHTML = `<small>Total mensal</small>${money(calculateSignupTotal(modules, readSignupModules(form)))}`;
+  const modal = Array.from(document.querySelectorAll(".modal-backdrop")).pop();
+  const form = modal?.querySelector("[data-tenant-form]");
+  const totalEl = modal?.querySelector("[data-signup-total]");
+  const businessTypeSelect = form?.querySelector('select[name="businessType"]');
+  const saveButton = modal?.querySelector("[data-save]");
+  const previousButton = modal?.querySelector("[data-prev-step]");
+  const nextButton = modal?.querySelector("[data-next-step]");
+  let step = 0;
+
+  const selectedModules = () => readSignupModules(form);
+  const updateSummary = () => {
+    const selected = selectedModules();
+    totalEl.innerHTML = `<small>Total mensal</small>${money(calculateSignupTotal(modules, selected))}`;
+    modal.querySelector("[data-business-type-label]").textContent = businessTypeLabel(businessTypeSelect.value);
+    modal.querySelector("[data-modules-summary]").textContent = formatEnabledModules(selected);
+    modal.querySelector("[data-total-summary]").textContent = money(calculateSignupTotal(modules, selected));
   };
+  const showStep = (nextStep) => {
+    step = Math.max(0, Math.min(3, nextStep));
+    modal.querySelectorAll("[data-onboarding-step]").forEach((section) => { section.hidden = Number(section.dataset.onboardingStep) !== step; });
+    modal.querySelectorAll("[data-step-indicator]").forEach((item) => item.classList.toggle("active", Number(item.dataset.stepIndicator) === step));
+    previousButton.hidden = step === 0;
+    nextButton.hidden = step === 3;
+    if (saveButton) saveButton.hidden = step !== 3;
+    updateSummary();
+  };
+  const validateCurrentStep = () => {
+    const section = modal.querySelector(`[data-onboarding-step="${step}"]`);
+    const invalid = Array.from(section.querySelectorAll("input,select,textarea")).find((control) => !control.checkValidity());
+    if (invalid) invalid.reportValidity();
+    return !invalid;
+  };
+  const refreshTotal = () => updateSummary();
+  const applyPreset = (type) => {
+    const codes = new Set([...(presetModulesForBusinessType(type) || []), ...requiredCodes]);
+    form?.querySelectorAll('input[name="enabledModules"]').forEach((input) => {
+      if (!input.disabled) input.checked = codes.has(normalizeModuleCode(input.value));
+    });
+    updateSummary();
+  };
+
+  businessTypeSelect?.addEventListener("change", (event) => applyPreset(event.target.value));
   form?.querySelectorAll('input[name="enabledModules"]').forEach((input) => {
     if (!input.disabled) input.addEventListener("change", refreshTotal);
   });
+  previousButton?.addEventListener("click", () => showStep(step - 1));
+  nextButton?.addEventListener("click", () => { if (validateCurrentStep()) showStep(step + 1); });
+  showStep(0);
 }
 
 const navItems = [
@@ -204,6 +396,7 @@ const navItems = [
   ["projetos", "Projetos", "projects", "projects"],
   ["patrimonio", "Patrimônio", "projects", "assets"],
   ["protocolos", "Protocolos", "receipt", "protocols"],
+  ["notificacoes", "Notificações", "bell", "core"],
   ["financeiro", "Financeiro", "card", "financial"],
   ["mercadopago", "Mercado Pago", "card", "financial"],
   ["saas", "SaaS", "saas", "core"],
@@ -213,13 +406,21 @@ const navItems = [
 function visibleNavItems() { return navItems.filter(([, , , moduleCode]) => hasModuleAccess(moduleCode)); }
 function shellHtml() {
   const branding = resolveBranding(); applyBrandingTheme(branding);
-  return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand brand-shell">${brandLogoHtml(branding, 38, "brand-logo-shell")}<div><span>${escapeHtml(currentTenantName())}</span><small>Nexora Gestão</small></div></div><nav class="nav">${visibleNavItems().map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></div></aside><section class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="topbar-brand">${brandLogoHtml(branding, 30, "brand-logo-topbar")}<div><div class="tenant-name">${escapeHtml(currentTenantName())}</div><small>${escapeHtml(branding.organizationName)}</small></div></div></div><div class="user-menu"><button class="button button-ghost button-sm" data-open-notifications style="position:relative">${icon("bell")}<span style="margin-left:6px">Notificações</span>${state.notifications.unread > 0 ? `<span style="position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#ef4444;color:#fff;font-size:11px;display:grid;place-items:center;font-weight:800">${state.notifications.unread}</span>` : ''}</button><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main><footer class="app-footer"><strong>${escapeHtml(currentTenantName())}</strong><span>NEXORA © 2026 • Plataforma de Gestão Inteligente</span></footer></section></div><div data-notifications-host></div>`;
+  return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand brand-shell">${brandLogoHtml(branding, 38, "brand-logo-shell")}<div><span>${escapeHtml(currentTenantName())}</span><small>Nexora Gestão</small></div></div><nav class="nav">${visibleNavItems().map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></div></aside><section class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="topbar-brand">${brandLogoHtml(branding, 30, "brand-logo-topbar")}<div><div class="tenant-name">${escapeHtml(currentTenantName())}</div><small>${escapeHtml(branding.organizationName)}</small></div></div></div><div class="user-menu">${state.pwa.canInstall ? `<button class="button button-secondary button-sm" data-install-app>${icon("star")} Instalar NEXORA</button>` : ""}<button class="button button-ghost button-sm" data-open-notifications style="position:relative">${icon("bell")}<span style="margin-left:6px">Notificações</span>${state.notifications.unread > 0 ? `<span style="position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#ef4444;color:#fff;font-size:11px;display:grid;place-items:center;font-weight:800">${state.notifications.unread}</span>` : ''}</button><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main><footer class="app-footer"><strong>${escapeHtml(currentTenantName())}</strong><span>NEXORA © 2026 • Plataforma de Gestão Inteligente</span></footer></section></div><div data-notifications-host></div>`;
 }
 async function renderShell() {
   if (!state.token) return renderLogin();
+  injectPwaStyles();
+  updatePwaMeta(resolveBranding());
+  registerPwaServiceWorker();
+  if (!window.__nexoraPwaWired) {
+    wirePwaInstallPrompt();
+    window.__nexoraPwaWired = true;
+  }
   app.innerHTML = shellHtml();
   app.querySelector("[data-logout]").addEventListener("click", logout);
   app.querySelector("[data-menu]").addEventListener("click", () => app.querySelector("[data-sidebar]").classList.toggle("open"));
+  app.querySelector("[data-install-app]")?.addEventListener("click", triggerPwaInstall);
   renderNotificationsPanel();
   await refreshNotifications();
   await renderRoute();
@@ -240,7 +441,7 @@ function pageHead(title, subtitle, actions = "") { return `<header class="page-h
 async function renderRoute() {
   loading();
   try {
-    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, patrimonio: renderAssets, protocolos: renderProtocols, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
+    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, patrimonio: renderAssets, protocolos: renderProtocols, notificacoes: renderNotificationsRoute, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
     const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
     if (!visibleRoutes.has(state.route)) {
       setRoute("dashboard");
@@ -250,14 +451,63 @@ async function renderRoute() {
   } catch (error) { content().innerHTML = `<div class="card empty">Não foi possível carregar esta tela.<br><small>${escapeHtml(error.message)}</small></div>`; toast(error.message, true); }
 }
 
+function dashboardMobileCards() {
+  const cards = [
+    ["financeiro", "Financeiro", "card", "financial"],
+    ["projetos", "Projetos", "projects", "projects"],
+    ["patrimonio", "Patrimônio", "projects", "assets"],
+    ["protocolos", "Protocolos", "receipt", "protocols"],
+    ["notificacoes", "Notificações", "bell", "core"]
+  ].filter(([, , , moduleCode]) => hasModuleAccess(moduleCode));
+  return `<section class="mobile-dashboard-cards">${cards.map(([route, label, glyph]) => `<a class="mobile-dashboard-card" href="#${route}">${icon(glyph)}<strong>${label}</strong></a>`).join("")}</section>`;
+}
+
 async function renderDashboard() {
   const [{ data }, me] = await Promise.all([api("/api/dashboard"), api("/api/me")]); state.me = me; syncSessionBranding(me);
   const max = Math.max(...data.months.map((m) => Math.max(m.received, m.charged)), 1); const delinquency = data.associates ? Math.round((data.overdueInvoices / Math.max(data.pendingInvoices + data.paidInvoices + data.overdueInvoices, 1)) * 100) : 0; const sub = me.subscription || {}; const trialDays = sub.trialEndsAt ? Math.max(0, Math.ceil((new Date(sub.trialEndsAt) - new Date()) / 86400000)) : 0;
   const branding = resolveBranding(me.branding);
-  content().innerHTML = `${pageHead("Dashboard", "Visão geral da operação da associação.")}<section class="card brand-banner"><div><small>Identidade ativa</small><h2>${escapeHtml(currentTenantName())}</h2><p>${escapeHtml(me.tenant?.legalDocument || "Documento não informado")}</p></div><div class="brand-banner-logo">${brandLogoHtml(branding, 72, "brand-banner-img")}</div></section><section class="metrics">
+  content().innerHTML = `${pageHead("Dashboard", "Visão geral da operação da associação.")}${dashboardMobileCards()}<section class="card brand-banner"><div><small>Identidade ativa</small><h2>${escapeHtml(currentTenantName())}</h2><p>${escapeHtml(me.tenant?.legalDocument || "Documento não informado")}</p></div><div class="brand-banner-logo">${brandLogoHtml(branding, 72, "brand-banner-img")}</div></section><section class="metrics">
     ${metric("Plano atual", sub.plan === "professional" ? "Profissional" : (sub.plan || "—"), sub.status === "trialing" ? `${trialDays} dias de teste` : (sub.status || ""), true)}${metric("Total associados", data.associates)}${metric("Ativos", data.activeAssociates)}${metric("Mensalidades pendentes", data.pendingInvoices, "", true)}
     ${metric("Mensalidades pagas", data.paidInvoices)}${metric("Valor a receber", money(data.totalReceber))}${metric("Valor recebido", money(data.totalRecebido), "", true)}${metric("PIX gerados", data.pixGenerated)}${metric("Boletos gerados", data.boletosGenerated)}
   </section><section class="grid-2"><div class="card"><h3>Recebimentos e cobranças — últimos 6 meses</h3><div class="chart">${data.months.map((month) => `<div class="bar-group"><div class="bars"><span class="bar secondary" style="height:${Math.max(3, month.charged / max * 180)}px" title="Cobrado ${money(month.charged)}"></span><span class="bar" style="height:${Math.max(3, month.received / max * 180)}px" title="Recebido ${money(month.received)}"></span></div><span class="bar-label">${month.label}</span></div>`).join("")}</div></div><div class="card"><h3>Inadimplência</h3><div class="donut" style="--value:${delinquency}%" data-label="${delinquency}%"></div><p style="text-align:center;color:var(--muted)">${data.overdueInvoices} mensalidade(s) vencida(s) • ${money(data.totalVencido)}</p></div></section>`;
+}
+async function renderNotificationsRoute() {
+  const [summary, list] = await Promise.all([
+    api("/api/notifications/dashboard"),
+    api("/api/notifications?limit=50")
+  ]);
+  state.notifications.summary = {
+    critical: Number(summary.critical || 0),
+    today: Number(summary.today || 0),
+    week: Number(summary.week || 0),
+    smartAlertsToday: Number(summary.smartAlertsToday || 0)
+  };
+  content().innerHTML = `${pageHead("Notificações", "Central de alertas e automações inteligentes.", '<button class="button button-primary" data-run-smart-alerts-route>Verificar alertas agora</button>')}<section class="metrics">${metric("Não lidas", summary.unread || 0, "", true)}${metric("Críticas", summary.critical || 0)}${metric("Hoje", summary.today || 0)}${metric("Semana", summary.week || 0)}${metric("Alertas inteligentes hoje", summary.smartAlertsToday || 0, "", true)}</section><section class="card"><div class="actions" style="margin-bottom:12px"><button class="button button-secondary" data-mark-all-route>Marcar todas como lidas</button></div><div class="grid-list" style="display:grid;gap:10px">${(list.notifications || []).map((item) => notificationCard(item)).join("") || '<div class="card empty">Sem notificações no momento.</div>'}</div></section>`;
+  content().querySelector("[data-run-smart-alerts-route]")?.addEventListener("click", async () => {
+    const result = await api("/api/notifications/run-smart-alerts", { method: "POST" });
+    toast(`Criadas: ${Number(result.created || 0)} | Ignoradas: ${Number(result.skipped || 0)} | Erros: ${Number(result.errors || 0)}`);
+    await renderNotificationsRoute();
+    await refreshNotifications();
+  });
+  content().querySelector("[data-mark-all-route]")?.addEventListener("click", async () => {
+    await api("/api/notifications/read-all", { method: "POST" });
+    await renderNotificationsRoute();
+    await refreshNotifications();
+  });
+  content().querySelectorAll("[data-mark-read-notification]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/notifications/${button.dataset.markReadNotification}/read`, { method: "POST" });
+      await renderNotificationsRoute();
+      await refreshNotifications();
+    });
+  });
+  content().querySelectorAll("[data-delete-notification]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/notifications/${button.dataset.deleteNotification}`, { method: "DELETE" });
+      await renderNotificationsRoute();
+      await refreshNotifications();
+    });
+  });
 }
 function metric(label, value, note = "", accent = false) { return `<article class="metric${accent ? " accent" : ""}"><div class="metric-label">${label}</div><div class="metric-value">${value}</div>${note ? `<div class="metric-note">${note}</div>` : ""}</article>`; }
 

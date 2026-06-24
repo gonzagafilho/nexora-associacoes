@@ -17,6 +17,14 @@ const {
 
 const router = express.Router();
 
+const BUSINESS_TYPE_PRESETS = {
+  association: ["core", "financial", "associates", "memberbilling", "protocols"],
+  company: ["core", "financial", "projects", "assets", "protocols"],
+  condominium: ["core", "financial", "protocols"],
+  ngo: ["core", "financial", "associates", "protocols"],
+  construction: ["core", "financial", "projects", "assets", "protocols"]
+};
+
 function clean(value) {
   return String(value || "").trim();
 }
@@ -31,6 +39,16 @@ function makeSlug(value) {
     .slice(0, 40);
 
   return base || `tenant-${Date.now()}`;
+}
+
+function resolveBusinessType(value) {
+  const normalized = clean(value).toLowerCase();
+  return BUSINESS_TYPE_PRESETS[normalized] ? normalized : "association";
+}
+
+function normalizeColor(value, fallback) {
+  const color = clean(value);
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
 }
 
 router.get("/saas-modules", async (req, res, next) => {
@@ -60,6 +78,7 @@ router.post("/signup", async (req, res, next) => {
     const phone = clean(req.body.phone);
     const email = clean(req.body.email).toLowerCase();
     const password = String(req.body.password || "");
+    const businessType = resolveBusinessType(req.body.businessType);
 
     if (!associationName || !ownerName || !phone || !email || !password) {
       return res.status(400).json({
@@ -85,7 +104,11 @@ router.post("/signup", async (req, res, next) => {
     }
 
     const trialDays = 7;
-    const requestedModules = normalizeModuleCodes(req.body.enabledModules || []);
+    const requestedModules = normalizeModuleCodes(
+      Array.isArray(req.body.enabledModules) && req.body.enabledModules.length
+        ? req.body.enabledModules
+        : BUSINESS_TYPE_PRESETS[businessType]
+    );
     const previewPricing = await calculateTenantSubscription({ enabledModules: requestedModules });
     const trialEndsAt = new Date();
     trialEndsAt.setDate(trialEndsAt.getDate() + trialDays);
@@ -101,6 +124,7 @@ router.post("/signup", async (req, res, next) => {
       email,
       paymentGateway: "manual",
       status: "active",
+      businessType,
       enabledModules: previewPricing.enabledModules
     });
 
@@ -121,10 +145,10 @@ router.post("/signup", async (req, res, next) => {
     await Promise.all([
       TenantBranding.create({
         tenantId: tenant._id,
-        logoUrl: "",
-        primaryColor: "#0ea5e9",
-        secondaryColor: "#0284c7",
-        documentFooter: "Documento gerado automaticamente pelo Nexora Gestão."
+        logoUrl: clean(req.body.branding?.logoUrl),
+        primaryColor: normalizeColor(req.body.branding?.primaryColor, "#0ea5e9"),
+        secondaryColor: normalizeColor(req.body.branding?.secondaryColor, "#0284c7"),
+        documentFooter: clean(req.body.branding?.documentFooter) || "Documento gerado automaticamente pelo Nexora Gestão."
       }),
       TenantBillingSettings.create({
         tenantId: tenant._id
@@ -169,6 +193,7 @@ router.post("/signup", async (req, res, next) => {
         id: tenant._id,
         name: tenant.name,
         status: tenant.status,
+        businessType: tenant.businessType,
         plan: "professional",
         subscriptionStatus: "trialing",
         trialEndsAt,

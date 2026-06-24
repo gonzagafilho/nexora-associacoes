@@ -16,6 +16,11 @@ const tenantSchema = new mongoose.Schema(
       enum: ["manual", "mercadopago", "cora"],
       default: "manual"
     },
+    businessType: {
+      type: String,
+      enum: ["association", "company", "condominium", "ngo", "construction"],
+      default: "association"
+    },
     enabledModules: {
       type: [String],
       default: [],

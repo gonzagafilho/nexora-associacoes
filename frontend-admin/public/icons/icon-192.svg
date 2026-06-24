@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="NEXORA Gestão">
+  <rect width="192" height="192" rx="40" fill="#0f4c81"/>
+  <circle cx="96" cy="96" r="58" fill="#ffffff" opacity="0.12"/>
+  <path d="M55 126V66h20l42 42V66h20v60h-20l-42-42v42H55Z" fill="#ffffff"/>
+</svg>
