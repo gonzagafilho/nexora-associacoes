@@ -16,6 +16,7 @@ const state = {
   financialReportMonth: new Date().toISOString().slice(0, 7),
   projectFilters: { q: "", status: "", type: "" },
   assetFilters: { q: "", status: "", category: "" },
+  protocolFilters: { q: "", status: "", priority: "", type: "", dateFrom: "", dateTo: "", page: 1, limit: 20 },
   saasPayments: [],
   saasAudit: [],
   financialTransactions: []
@@ -63,7 +64,7 @@ function date(value) { return value ? new Intl.DateTimeFormat("pt-BR").format(ne
 function dateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—"; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function toast(message, error = false) { const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; toastRoot.append(el); setTimeout(() => el.remove(), 4200); }
-function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando", planning: "Planejamento", paused: "Pausado", completed: "Concluído", maintenance: "Manutenção", stored: "Armazenado", lost: "Perdido", sold: "Vendido", retired: "Baixado" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
+function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando", planning: "Planejamento", paused: "Pausado", completed: "Concluído", maintenance: "Manutenção", stored: "Armazenado", lost: "Perdido", sold: "Vendido", retired: "Baixado", open: "Aberto", waiting: "Aguardando", resolved: "Resolvido", closed: "Fechado" }; const tones = { open: "pending", waiting: "pending", in_progress: "approved", resolved: "active", closed: "inactive", cancelled: "cancelled" }; const tone = tones[status] || status; return `<span class="badge badge-${tone}">${labels[status] || escapeHtml(status)}</span>`; }
 function normalizeModuleCode(value) { return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, ""); }
 function normalizeModuleCodes(values = []) { return Array.from(new Set((Array.isArray(values) ? values : []).map((item) => normalizeModuleCode(item)).filter(Boolean))); }
 function tenantEnabledModules() {
@@ -194,6 +195,7 @@ const navItems = [
   ["cobrancas", "Cobranças", "receipt", "memberbilling"],
   ["projetos", "Projetos", "projects", "projects"],
   ["patrimonio", "Patrimônio", "projects", "assets"],
+  ["protocolos", "Protocolos", "receipt", "protocols"],
   ["financeiro", "Financeiro", "card", "financial"],
   ["mercadopago", "Mercado Pago", "card", "financial"],
   ["saas", "SaaS", "saas", "core"],
@@ -228,7 +230,7 @@ function pageHead(title, subtitle, actions = "") { return `<header class="page-h
 async function renderRoute() {
   loading();
   try {
-    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, patrimonio: renderAssets, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
+    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, patrimonio: renderAssets, protocolos: renderProtocols, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
     const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
     if (!visibleRoutes.has(state.route)) {
       setRoute("dashboard");
@@ -283,7 +285,9 @@ function projectStatusLabel(status) { const labels = { planning: "Planejamento",
 function projectBudgetCategoryLabel(category) { const labels = { mao_de_obra: "Mão de obra", material: "Material", servico: "Serviço", equipamento: "Equipamento", deslocamento: "Deslocamento", outro: "Outro" }; return labels[category] || "Outro"; }
 function projectTypeFilter(value = "") { return `<select class="select" data-project-type style="max-width:180px"><option value="">Todos os tipos</option><option value="obra" ${value === "obra" ? "selected" : ""}>Obra</option><option value="projeto" ${value === "projeto" ? "selected" : ""}>Projeto</option><option value="evento" ${value === "evento" ? "selected" : ""}>Evento</option><option value="campanha" ${value === "campanha" ? "selected" : ""}>Campanha</option><option value="outro" ${value === "outro" ? "selected" : ""}>Outro</option></select>`; }
 function projectStatusFilter(value = "") { return `<select class="select" data-project-status style="max-width:190px"><option value="">Todos os status</option><option value="planning" ${value === "planning" ? "selected" : ""}>Planejamento</option><option value="active" ${value === "active" ? "selected" : ""}>Ativos</option><option value="paused" ${value === "paused" ? "selected" : ""}>Pausados</option><option value="completed" ${value === "completed" ? "selected" : ""}>Concluídos</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Cancelados</option></select>`; }
-function projectSelectField(projects = [], selected = "") { return `<label class="field"><span>Projeto</span><select class="select" name="projectId"><option value="">Sem vínculo</option>${projects.map((project) => `<option value="${project.id}" ${String(project.id) === String(selected || "") ? "selected" : ""}>${escapeHtml(project.name)} • ${escapeHtml(projectStatusLabel(project.status))}</option>`).join("")}</select></label>`; }
+function projectSelectField(projects = [], selected = "", name = "projectId", label = "Projeto", includeEmpty = true) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${includeEmpty ? '<option value="">Sem vínculo</option>' : ''}${projects.map((project) => `<option value="${project.id}" ${String(project.id) === String(selected || "") ? "selected" : ""}>${escapeHtml(project.name)} • ${escapeHtml(projectStatusLabel(project.status))}</option>`).join("")}</select></label>`; }
+function assetSelectField(assets = [], selected = "", name = "assetId", label = "Patrimônio", includeEmpty = true) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${includeEmpty ? '<option value="">Sem vínculo</option>' : ''}${assets.map((asset) => `<option value="${asset.id}" ${String(asset.id) === String(selected || "") ? "selected" : ""}>${escapeHtml(asset.assetCode || '—')} • ${escapeHtml(asset.name || 'Sem nome')}</option>`).join("")}</select></label>`; }
+function associateSelectField(associates = [], selected = "", name = "associateId", label = "Associado", includeEmpty = true) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${includeEmpty ? '<option value="">Sem vínculo</option>' : ''}${associates.map((associate) => `<option value="${associate._id || associate.id}" ${String(associate._id || associate.id) === String(selected || "") ? "selected" : ""}>${escapeHtml(associate.name || 'Sem nome')}</option>`).join("")}</select></label>`; }
 function projectBudgetCategorySelect(value = "outro") { return `<select class="select" data-budget-field="category"><option value="mao_de_obra" ${value === "mao_de_obra" ? "selected" : ""}>Mão de obra</option><option value="material" ${value === "material" ? "selected" : ""}>Material</option><option value="servico" ${value === "servico" ? "selected" : ""}>Serviço</option><option value="equipamento" ${value === "equipamento" ? "selected" : ""}>Equipamento</option><option value="deslocamento" ${value === "deslocamento" ? "selected" : ""}>Deslocamento</option><option value="outro" ${value === "outro" ? "selected" : ""}>Outro</option></select>`; }
 function projectBudgetNumber(value) { const num = Number(value); return Number.isFinite(num) ? num : 0; }
 function normalizeProjectBudgetItem(item = {}) {
@@ -470,6 +474,104 @@ async function openAssetModal(asset = {}) {
 function openAssetActionModal(asset = {}, action = 'maintenance', title = 'Atualizar ativo', saveLabel = 'Salvar') {
   const endpoint = action === 'sell' ? 'sell' : action === 'retire' ? 'retire' : 'maintenance';
   openModal(title, `<form data-asset-action-form><div class="form-grid"><div class="detail-item span-2"><small>Ativo</small>${escapeHtml(asset.assetCode || '—')} • ${escapeHtml(asset.name || '—')}</div>${field('currentValue', 'Valor atual', asset.currentValue ?? '', 'number', false, 'step="0.01" min="0"')}${field('responsibleName', 'Responsável', asset.responsibleName || '')}${field('location', 'Local', asset.location || '')}<label class="field span-2"><span>Observações</span><textarea class="textarea" name="notes">${escapeHtml(asset.notes || '')}</textarea></label></div></form>`, async () => { const form = document.querySelector('[data-asset-action-form]'); const fd = new FormData(form); await api(`/api/assets/${asset.id}/${endpoint}`, { method: 'POST', body: JSON.stringify({ currentValue: fd.get('currentValue') ? Number(fd.get('currentValue')) : undefined, responsibleName: fd.get('responsibleName') || undefined, location: fd.get('location') || undefined, notes: fd.get('notes') || '' }) }); toast(action === 'sell' ? 'Ativo vendido.' : action === 'retire' ? 'Ativo baixado.' : 'Manutenção registrada.'); await renderAssets(); }, 'Cancelar', saveLabel);
+}
+
+function protocolTypeLabel(value) { const labels = { solicitacao: 'Solicitação', reclamacao: 'Reclamação', manutencao: 'Manutenção', documento: 'Documento', financeiro: 'Financeiro', compra: 'Compra', patrimonio: 'Patrimônio', projeto: 'Projeto', outro: 'Outro' }; return labels[value] || value || '—'; }
+function protocolPriorityLabel(value) { const labels = { low: 'Baixa', medium: 'Média', high: 'Alta', urgent: 'Urgente' }; return labels[value] || value || '—'; }
+function protocolPriorityBadge(value) { const tone = value === 'urgent' ? 'overdue' : value === 'high' ? 'rejected' : value === 'medium' ? 'pending' : 'inactive'; return `<span class="badge badge-${tone}">${escapeHtml(protocolPriorityLabel(value))}</span>`; }
+function protocolStatusFilter(value = '') { return `<select class="select" data-protocol-status style="max-width:170px"><option value="">Todos os status</option><option value="open" ${value === 'open' ? 'selected' : ''}>Abertos</option><option value="in_progress" ${value === 'in_progress' ? 'selected' : ''}>Em andamento</option><option value="waiting" ${value === 'waiting' ? 'selected' : ''}>Aguardando</option><option value="resolved" ${value === 'resolved' ? 'selected' : ''}>Resolvidos</option><option value="closed" ${value === 'closed' ? 'selected' : ''}>Fechados</option><option value="cancelled" ${value === 'cancelled' ? 'selected' : ''}>Cancelados</option></select>`; }
+function protocolPriorityFilter(value = '') { return `<select class="select" data-protocol-priority style="max-width:160px"><option value="">Todas prioridades</option><option value="urgent" ${value === 'urgent' ? 'selected' : ''}>Urgente</option><option value="high" ${value === 'high' ? 'selected' : ''}>Alta</option><option value="medium" ${value === 'medium' ? 'selected' : ''}>Média</option><option value="low" ${value === 'low' ? 'selected' : ''}>Baixa</option></select>`; }
+function protocolTypeFilter(value = '') { return `<select class="select" data-protocol-type style="max-width:170px"><option value="">Todos os tipos</option><option value="solicitacao" ${value === 'solicitacao' ? 'selected' : ''}>Solicitação</option><option value="reclamacao" ${value === 'reclamacao' ? 'selected' : ''}>Reclamação</option><option value="manutencao" ${value === 'manutencao' ? 'selected' : ''}>Manutenção</option><option value="documento" ${value === 'documento' ? 'selected' : ''}>Documento</option><option value="financeiro" ${value === 'financeiro' ? 'selected' : ''}>Financeiro</option><option value="compra" ${value === 'compra' ? 'selected' : ''}>Compra</option><option value="patrimonio" ${value === 'patrimonio' ? 'selected' : ''}>Patrimônio</option><option value="projeto" ${value === 'projeto' ? 'selected' : ''}>Projeto</option><option value="outro" ${value === 'outro' ? 'selected' : ''}>Outro</option></select>`; }
+function protocolTypeSelect(value = 'solicitacao') { return selectField('type', 'Tipo', [['solicitacao', 'Solicitação'], ['reclamacao', 'Reclamação'], ['manutencao', 'Manutenção'], ['documento', 'Documento'], ['financeiro', 'Financeiro'], ['compra', 'Compra'], ['patrimonio', 'Patrimônio'], ['projeto', 'Projeto'], ['outro', 'Outro']], value); }
+function protocolPrioritySelect(value = 'medium') { return selectField('priority', 'Prioridade', [['low', 'Baixa'], ['medium', 'Média'], ['high', 'Alta'], ['urgent', 'Urgente']], value); }
+function protocolStatusSelect(value = 'open') { return selectField('status', 'Status', [['open', 'Aberto'], ['in_progress', 'Em andamento'], ['waiting', 'Aguardando'], ['resolved', 'Resolvido'], ['closed', 'Fechado'], ['cancelled', 'Cancelado']], value); }
+function protocolQuery() {
+  const params = new URLSearchParams({ page: state.protocolFilters.page, limit: state.protocolFilters.limit });
+  ['q', 'status', 'priority', 'type', 'dateFrom', 'dateTo'].forEach((key) => {
+    if (state.protocolFilters[key]) params.set(key, state.protocolFilters[key]);
+  });
+  return params.toString();
+}
+function protocolActionButtons(protocol) {
+  return '<div class="row-actions"><button class="button button-secondary button-sm" data-edit-protocol="' + protocol.id + '">Editar</button><button class="button button-secondary button-sm" data-status-protocol="' + protocol.id + '">Status</button>' +
+    (protocol.status !== 'resolved' && protocol.status !== 'closed' && protocol.status !== 'cancelled' ? '<button class="button button-ghost button-sm" data-resolve-protocol="' + protocol.id + '">Resolver</button>' : '') +
+    (protocol.status !== 'closed' && protocol.status !== 'cancelled' ? '<button class="button button-ghost button-sm" data-close-protocol="' + protocol.id + '">Fechar</button>' : '') +
+    (protocol.status !== 'cancelled' ? '<button class="button button-ghost button-sm" data-cancel-protocol="' + protocol.id + '">Cancelar</button>' : '') +
+    '<button class="button button-ghost button-sm" data-history-protocol="' + protocol.id + '">Histórico</button></div>';
+}
+function renderProtocolsTable(items = []) {
+  if (!items.length) return '<div class="card empty">Nenhum protocolo encontrado.</div>';
+  return '<div class="table-wrap"><table class="table"><thead><tr><th>Número</th><th>Título</th><th>Tipo</th><th>Prioridade</th><th>Status</th><th>Solicitante</th><th>Responsável</th><th>Vencimento</th><th>Ações</th></tr></thead><tbody>' +
+    items.map((protocol) => '<tr><td><div class="cell-title">' + escapeHtml(protocol.protocolNumber || '—') + '</div><div class="cell-sub">Criado em ' + date(protocol.createdAt) + '</div></td><td><div class="cell-title">' + escapeHtml(protocol.title || '—') + '</div><div class="cell-sub">' + escapeHtml(protocol.relatedProjectName || protocol.relatedAssetName || protocol.relatedAssociateName || protocol.description || '—') + '</div></td><td>' + escapeHtml(protocolTypeLabel(protocol.type)) + '</td><td>' + protocolPriorityBadge(protocol.priority) + '</td><td>' + badge(protocol.status) + '</td><td><div class="cell-title">' + escapeHtml(protocol.requesterName || '—') + '</div><div class="cell-sub">' + escapeHtml(protocol.requesterContact || '') + '</div></td><td>' + escapeHtml(protocol.assignedToName || '—') + '</td><td>' + date(protocol.dueDate) + '</td><td>' + protocolActionButtons(protocol) + '</td></tr>').join('') +
+    '</tbody></table></div>';
+}
+async function renderProtocols() {
+  const [dashboard, list] = await Promise.all([api('/api/protocols/dashboard'), api(`/api/protocols?${protocolQuery()}`)]);
+  const protocols = list.protocols || [];
+  content().innerHTML = `${pageHead('Protocolos', 'Solicitações internas e externas com workflow e histórico.', '<button class="button button-primary" data-new-protocol>+ Novo protocolo</button>')}<section class="metrics">${metric('Total', dashboard.totalProtocols || 0)}${metric('Abertos', dashboard.openProtocols || 0, '', true)}${metric('Em andamento', dashboard.inProgressProtocols || 0)}${metric('Aguardando', dashboard.waitingProtocols || 0)}${metric('Resolvidos', dashboard.resolvedProtocols || 0)}${metric('Urgentes', dashboard.urgentProtocols || 0, '', true)}${metric('Atrasados', dashboard.overdueProtocols || 0)}</section><section class="card" style="margin-top:16px"><form class="toolbar" data-protocol-filters><input class="input" name="q" placeholder="Buscar por número, título, solicitante ou observação" value="${escapeHtml(state.protocolFilters.q || '')}">${protocolStatusFilter(state.protocolFilters.status)}${protocolPriorityFilter(state.protocolFilters.priority)}${protocolTypeFilter(state.protocolFilters.type)}<input class="input" type="date" name="dateFrom" value="${escapeHtml(state.protocolFilters.dateFrom || '')}"><input class="input" type="date" name="dateTo" value="${escapeHtml(state.protocolFilters.dateTo || '')}"><button class="button button-secondary" type="submit">Filtrar</button></form><div data-protocol-table>${renderProtocolsTable(protocols)}</div></section>`;
+  bindProtocols(protocols);
+}
+function bindProtocols(protocols = []) {
+  content().querySelector('[data-new-protocol]')?.addEventListener('click', () => openProtocolModal());
+  content().querySelector('[data-protocol-filters]')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    state.protocolFilters.q = String(form.get('q') || '');
+    state.protocolFilters.status = String(form.get('status') || '');
+    state.protocolFilters.priority = String(form.get('priority') || '');
+    state.protocolFilters.type = String(form.get('type') || '');
+    state.protocolFilters.dateFrom = String(form.get('dateFrom') || '');
+    state.protocolFilters.dateTo = String(form.get('dateTo') || '');
+    state.protocolFilters.page = 1;
+    await renderProtocols();
+  });
+  content().querySelectorAll('[data-edit-protocol]').forEach((button) => button.addEventListener('click', () => openProtocolModal(protocols.find((item) => item.id === button.dataset.editProtocol) || {})));
+  content().querySelectorAll('[data-status-protocol]').forEach((button) => button.addEventListener('click', () => openProtocolStatusModal(protocols.find((item) => item.id === button.dataset.statusProtocol) || {})));
+  content().querySelectorAll('[data-resolve-protocol]').forEach((button) => button.addEventListener('click', () => openProtocolActionModal(protocols.find((item) => item.id === button.dataset.resolveProtocol) || {}, 'resolve', 'Resolver protocolo', 'Resolver', 'resolved')));
+  content().querySelectorAll('[data-close-protocol]').forEach((button) => button.addEventListener('click', () => openProtocolActionModal(protocols.find((item) => item.id === button.dataset.closeProtocol) || {}, 'close', 'Fechar protocolo', 'Fechar', 'closed')));
+  content().querySelectorAll('[data-cancel-protocol]').forEach((button) => button.addEventListener('click', () => openProtocolActionModal(protocols.find((item) => item.id === button.dataset.cancelProtocol) || {}, 'cancel', 'Cancelar protocolo', 'Cancelar', 'cancelled')));
+  content().querySelectorAll('[data-history-protocol]').forEach((button) => button.addEventListener('click', () => openProtocolHistoryModal(protocols.find((item) => item.id === button.dataset.historyProtocol) || {})));
+}
+async function openProtocolModal(protocol = {}) {
+  const isEdit = Boolean(protocol.id);
+  const [projectsResponse, assetsResponse, associatesResponse] = await Promise.all([api('/api/projects'), api('/api/assets'), api('/api/associates?status=active')]);
+  const projects = projectsResponse.projects || [];
+  const assets = assetsResponse.assets || [];
+  const associates = associatesResponse.associates || [];
+  openModal(isEdit ? 'Editar protocolo' : 'Novo protocolo', `<form data-protocol-form><div class="form-grid">${field('title', 'Título', protocol.title || '', 'text', true)}${protocolTypeSelect(protocol.type || 'solicitacao')}${protocolPrioritySelect(protocol.priority || 'medium')}${protocolStatusSelect(protocol.status || 'open')}${field('requesterName', 'Solicitante', protocol.requesterName || '', 'text', true)}${field('requesterContact', 'Contato', protocol.requesterContact || '')}${field('assignedToName', 'Responsável', protocol.assignedToName || '')}${field('dueDate', 'Vencimento', inputDateValue(protocol.dueDate), 'date')}${projectSelectField(projects, protocol.relatedProjectId || '', 'relatedProjectId', 'Projeto relacionado')}${assetSelectField(assets, protocol.relatedAssetId || '', 'relatedAssetId', 'Patrimônio relacionado')}${associateSelectField(associates, protocol.relatedAssociateId || '', 'relatedAssociateId', 'Associado relacionado')}<label class="field span-2"><span>Descrição</span><textarea class="textarea" name="description">${escapeHtml(protocol.description || '')}</textarea></label><label class="field span-2"><span>Observações</span><textarea class="textarea" name="notes">${escapeHtml(protocol.notes || '')}</textarea></label></div></form>`, async () => {
+    const form = document.querySelector('[data-protocol-form]');
+    if (!form.reportValidity()) return false;
+    const fd = new FormData(form);
+    await api(isEdit ? `/api/protocols/${protocol.id}` : '/api/protocols', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify({ title: fd.get('title'), description: fd.get('description'), type: fd.get('type'), priority: fd.get('priority'), status: fd.get('status'), requesterName: fd.get('requesterName'), requesterContact: fd.get('requesterContact'), assignedToName: fd.get('assignedToName'), dueDate: fd.get('dueDate') || undefined, relatedProjectId: fd.get('relatedProjectId') || undefined, relatedAssetId: fd.get('relatedAssetId') || undefined, relatedAssociateId: fd.get('relatedAssociateId') || undefined, notes: fd.get('notes') }) });
+    toast(isEdit ? 'Protocolo atualizado.' : 'Protocolo criado.');
+    await renderProtocols();
+  }, 'Cancelar', isEdit ? 'Salvar protocolo' : 'Criar protocolo');
+}
+function openProtocolStatusModal(protocol = {}) {
+  openModal('Atualizar status do protocolo', `<form data-protocol-status-form><div class="form-grid"><div class="detail-item span-2"><small>Protocolo</small>${escapeHtml(protocol.protocolNumber || '—')} • ${escapeHtml(protocol.title || '—')}</div>${protocolStatusSelect(protocol.status || 'open')}<label class="field span-2"><span>Mensagem</span><textarea class="textarea" name="message">${escapeHtml(protocol.notes || '')}</textarea></label></div></form>`, async () => {
+    const form = document.querySelector('[data-protocol-status-form]');
+    const fd = new FormData(form);
+    await api(`/api/protocols/${protocol.id}/status`, { method: 'POST', body: JSON.stringify({ status: fd.get('status'), message: fd.get('message') || '' }) });
+    toast('Status do protocolo atualizado.');
+    await renderProtocols();
+  }, 'Cancelar', 'Salvar status');
+}
+function openProtocolActionModal(protocol = {}, endpoint = 'resolve', title = 'Atualizar protocolo', saveLabel = 'Salvar', finalStatus = '') {
+  openModal(title, `<form data-protocol-action-form><div class="form-grid"><div class="detail-item span-2"><small>Protocolo</small>${escapeHtml(protocol.protocolNumber || '—')} • ${escapeHtml(protocol.title || '—')}</div><div class="detail-item"><small>Status atual</small>${badge(protocol.status || 'open')}</div><div class="detail-item"><small>Novo status</small>${badge(finalStatus || protocol.status || 'open')}</div><label class="field span-2"><span>Mensagem</span><textarea class="textarea" name="message">${escapeHtml(protocol.notes || '')}</textarea></label></div></form>`, async () => {
+    const form = document.querySelector('[data-protocol-action-form]');
+    const fd = new FormData(form);
+    await api(`/api/protocols/${protocol.id}/${endpoint}`, { method: 'POST', body: JSON.stringify({ message: fd.get('message') || '' }) });
+    toast(endpoint === 'resolve' ? 'Protocolo resolvido.' : endpoint === 'close' ? 'Protocolo fechado.' : 'Protocolo cancelado.');
+    await renderProtocols();
+  }, 'Cancelar', saveLabel);
+}
+async function openProtocolHistoryModal(protocol = {}) {
+  const result = await api(`/api/protocols/${protocol.id}/history`);
+  const history = result.history || [];
+  const timeline = history.length
+    ? history.map((item) => `<div style="position:relative;padding:0 0 18px 18px;border-left:2px solid var(--line)"><span style="position:absolute;left:-6px;top:3px;width:10px;height:10px;border-radius:999px;background:var(--primary)"></span><div class="cell-title">${escapeHtml(item.action || '—')} ${item.newStatus ? badge(item.newStatus) : ''}</div><div class="cell-sub">${dateTime(item.createdAt)} • ${escapeHtml(item.userEmail || 'Usuário não identificado')}</div><div style="margin-top:6px">${item.oldStatus ? `<small style="display:block;color:var(--muted)">Status anterior: ${escapeHtml(item.oldStatus)}</small>` : ''}${item.newStatus ? `<small style="display:block;color:var(--muted)">Novo status: ${escapeHtml(item.newStatus)}</small>` : ''}${escapeHtml(item.message || 'Sem mensagem adicional.')}</div></div>`).join('')
+    : '<div class="card empty">Nenhum histórico registrado.</div>';
+  openModal('Histórico do protocolo', `<div class="detail-grid"><div class="detail-item"><small>Número</small>${escapeHtml(result.protocol?.protocolNumber || protocol.protocolNumber || '—')}</div><div class="detail-item"><small>Status</small>${badge(result.protocol?.status || protocol.status || 'open')}</div><div class="detail-item"><small>Vencimento</small>${date(result.protocol?.dueDate || protocol.dueDate)}</div></div><div style="margin-top:18px">${timeline}</div>`, null, 'Fechar');
 }
 
 function financialQuery() {

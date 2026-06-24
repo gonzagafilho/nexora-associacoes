@@ -17,6 +17,7 @@ const tenantRoutes = require("./modules/tenant/tenant.routes");
 const financialRoutes = require("./modules/financial/financial.routes");
 const projectRoutes = require("./modules/projects/projects.routes");
 const assetRoutes = require("./modules/assets/assets.routes");
+const protocolRoutes = require("./modules/protocols/protocols.routes");
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use("/api/tenant", tenantRoutes);
 app.use("/api/financial", financialRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/assets", assetRoutes);
+app.use("/api/protocols", protocolRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",
   pixRoutes.mercadoPagoWebhook
