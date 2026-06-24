@@ -54,7 +54,8 @@ router.post("/login", async (req, res) => {
       tenant: {
         id: tenant._id,
         name: tenant.name,
-        status: tenant.status
+        status: tenant.status,
+        enabledModules: Array.isArray(tenant.enabledModules) ? tenant.enabledModules : []
       }
     });
   } catch (error) {
