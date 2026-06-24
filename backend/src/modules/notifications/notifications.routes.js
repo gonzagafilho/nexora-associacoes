@@ -10,8 +10,17 @@ const {
   getDashboard,
   ensureAutomaticNotifications
 } = require("../../services/notifications/notificationService");
+const { runSmartAlerts } = require("../../services/notifications/smartAlertService");
 
 const router = express.Router();
+
+function requireNotificationsAdmin(req, res, next) {
+  const allowedRoles = new Set(["owner", "admin", "superadmin"]);
+  if (!allowedRoles.has(req.user?.role)) {
+    return res.status(403).json({ ok: false, message: "Acesso administrativo necessário." });
+  }
+  return next();
+}
 
 router.get("/", auth, async (req, res) => {
   await ensureAutomaticNotifications({ tenantId: req.user.tenantId });
@@ -29,6 +38,11 @@ router.get("/dashboard", auth, async (req, res) => {
   await ensureAutomaticNotifications({ tenantId: req.user.tenantId });
   const summary = await getDashboard({ tenantId: req.user.tenantId, userId: req.user.id });
   return res.json({ ok: true, ...summary });
+});
+
+router.post("/run-smart-alerts", auth, requireNotificationsAdmin, async (req, res) => {
+  const summary = await runSmartAlerts({ tenantId: req.user.tenantId });
+  return res.json({ ok: true, created: summary.created, skipped: summary.skipped, errors: summary.errors });
 });
 
 router.post("/:id/read", auth, async (req, res) => {

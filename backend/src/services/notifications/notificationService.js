@@ -9,6 +9,7 @@ const Associate = require("../../models/Associate");
 const FinancialTransaction = require("../../models/FinancialTransaction");
 const TenantSubscription = require("../../models/TenantSubscription");
 const SaasSubscriptionPayment = require("../../models/SaasSubscriptionPayment");
+const { SMART_ALERT_REFERENCE_TYPES } = require("./smartAlertTypes");
 
 const FUTURE_CHANNELS = Object.freeze({
   email: { enabled: false },
@@ -168,13 +169,14 @@ async function getDashboard({ tenantId, userId }) {
   const now = new Date();
   const todayStart = startOfDay(now);
   const weekStart = addDays(todayStart, -6);
-  const [unread, critical, today, week] = await Promise.all([
+  const [unread, critical, today, week, smartAlertsToday] = await Promise.all([
     Notification.countDocuments({ tenantId, userId, isRead: false }),
     Notification.countDocuments({ tenantId, userId, severity: "critical", isRead: false }),
     Notification.countDocuments({ tenantId, userId, createdAt: { $gte: todayStart } }),
-    Notification.countDocuments({ tenantId, userId, createdAt: { $gte: weekStart, $lte: endOfDay(now) } })
+    Notification.countDocuments({ tenantId, userId, createdAt: { $gte: weekStart, $lte: endOfDay(now) } }),
+    Notification.countDocuments({ tenantId, userId, createdAt: { $gte: todayStart }, referenceType: { $in: SMART_ALERT_REFERENCE_TYPES } })
   ]);
-  return { unread, critical, today, week };
+  return { unread, critical, today, week, smartAlertsToday };
 }
 
 async function ensureAutomaticNotifications({ tenantId }) {

@@ -17,7 +17,13 @@ const state = {
   projectFilters: { q: "", status: "", type: "" },
   assetFilters: { q: "", status: "", category: "" },
   protocolFilters: { q: "", status: "", priority: "", type: "", dateFrom: "", dateTo: "", page: 1, limit: 20 },
-  notifications: { open: false, unread: 0, items: [], loading: false },
+  notifications: {
+    open: false,
+    unread: 0,
+    items: [],
+    loading: false,
+    summary: { critical: 0, today: 0, week: 0, smartAlertsToday: 0 }
+  },
   saasPayments: [],
   saasAudit: [],
   financialTransactions: []
@@ -273,7 +279,8 @@ function notificationCard(item = {}) {
   return `<article style="padding:12px;border:1px solid var(--line);border-radius:12px;background:${item.isRead ? '#0b1220' : '#111827'}"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><div style="font-weight:800">${escapeHtml(item.title || 'Notificação')}</div><div style="color:var(--muted);font-size:12px;margin-top:4px">${escapeHtml(item.message || '')}</div></div>${notificationSeverityChip(item.severity)}</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px"><small style="color:var(--muted)">${dateTime(item.createdAt)} • ${escapeHtml(notificationModuleLabel(item.module))}</small><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-read-notification="${item.id}">${item.isRead ? 'Lida' : 'Marcar lida'}</button><button class="button button-danger button-sm" data-delete-notification="${item.id}">Excluir</button></div></div></article>`;
 }
 function notificationsPanelHtml() {
-  return `<aside data-notifications-panel style="position:fixed;top:0;right:0;height:100vh;width:min(430px,92vw);z-index:180;background:#0b1220;border-left:1px solid var(--line);box-shadow:-18px 0 60px #0009;transform:${state.notifications.open ? 'translateX(0)' : 'translateX(105%)'};transition:transform .25s ease;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center"><div><h3 style="margin:0">Notificações</h3><small style="color:var(--muted)">${state.notifications.unread} não lida(s)</small></div><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-all-notifications>Marcar todas</button><button class="button button-ghost button-sm" data-close-notifications>Fechar</button></div></header><section style="padding:14px;overflow:auto;display:grid;gap:10px" data-notifications-list>${state.notifications.loading ? '<div class="card empty">Carregando notificações...</div>' : (state.notifications.items.length ? state.notifications.items.map((item) => notificationCard(item)).join('') : '<div class="card empty">Sem notificações no momento.</div>')}</section></aside><div data-notifications-overlay style="position:fixed;inset:0;background:#020617aa;z-index:170;display:${state.notifications.open ? 'block' : 'none'}"></div>`;
+  const summary = state.notifications.summary || { critical: 0, today: 0, week: 0, smartAlertsToday: 0 };
+  return `<aside data-notifications-panel style="position:fixed;top:0;right:0;height:100vh;width:min(430px,92vw);z-index:180;background:#0b1220;border-left:1px solid var(--line);box-shadow:-18px 0 60px #0009;transform:${state.notifications.open ? 'translateX(0)' : 'translateX(105%)'};transition:transform .25s ease;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center"><div><h3 style="margin:0">Notificações</h3><small style="color:var(--muted)">${state.notifications.unread} não lida(s)</small></div><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-all-notifications>Marcar todas</button><button class="button button-ghost button-sm" data-close-notifications>Fechar</button></div></header><section style="padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:8px"><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><div class="card" style="padding:10px"><small style="color:var(--muted)">Críticas</small><div style="font-weight:800">${Number(summary.critical || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Hoje</small><div style="font-weight:800">${Number(summary.today || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Semana</small><div style="font-weight:800">${Number(summary.week || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Alertas inteligentes hoje</small><div style="font-weight:800">${Number(summary.smartAlertsToday || 0)}</div></div></div><button class="button button-primary button-sm" data-run-smart-alerts>Verificar alertas agora</button></section><section style="padding:14px;overflow:auto;display:grid;gap:10px" data-notifications-list>${state.notifications.loading ? '<div class="card empty">Carregando notificações...</div>' : (state.notifications.items.length ? state.notifications.items.map((item) => notificationCard(item)).join('') : '<div class="card empty">Sem notificações no momento.</div>')}</section></aside><div data-notifications-overlay style="position:fixed;inset:0;background:#020617aa;z-index:170;display:${state.notifications.open ? 'block' : 'none'}"></div>`;
 }
 async function refreshNotifications() {
   state.notifications.loading = true;
@@ -281,11 +288,22 @@ async function refreshNotifications() {
     app.querySelector('[data-notifications-list]').innerHTML = '<div class="card empty">Carregando notificações...</div>';
   }
   try {
-    const [count, list] = await Promise.all([api('/api/notifications/unread-count'), api('/api/notifications?limit=30')]);
+    const [count, list, dashboard] = await Promise.all([
+      api('/api/notifications/unread-count'),
+      api('/api/notifications?limit=30'),
+      api('/api/notifications/dashboard')
+    ]);
     state.notifications.unread = Number(count.unread || 0);
     state.notifications.items = list.notifications || [];
+    state.notifications.summary = {
+      critical: Number(dashboard.critical || 0),
+      today: Number(dashboard.today || 0),
+      week: Number(dashboard.week || 0),
+      smartAlertsToday: Number(dashboard.smartAlertsToday || 0)
+    };
   } catch (_error) {
     state.notifications.items = [];
+    state.notifications.summary = { critical: 0, today: 0, week: 0, smartAlertsToday: 0 };
   } finally {
     state.notifications.loading = false;
     renderNotificationsPanel();
@@ -314,6 +332,11 @@ function bindNotificationsPanel() {
   app.querySelector('[data-mark-all-notifications]')?.addEventListener('click', async () => {
     await api('/api/notifications/read-all', { method: 'POST' });
     toast('Notificações marcadas como lidas.');
+    await refreshNotifications();
+  });
+  app.querySelector('[data-run-smart-alerts]')?.addEventListener('click', async () => {
+    const result = await api('/api/notifications/run-smart-alerts', { method: 'POST' });
+    toast(`Alertas verificados. Criadas: ${Number(result.created || 0)} | Ignoradas: ${Number(result.skipped || 0)} | Erros: ${Number(result.errors || 0)}`);
     await refreshNotifications();
   });
   app.querySelectorAll('[data-mark-read-notification]').forEach((button) => {
