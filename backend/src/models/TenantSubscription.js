@@ -26,6 +26,28 @@ const tenantSubscriptionSchema = new mongoose.Schema(
       default: 0
     },
 
+    baseAmount: {
+      type: Number,
+      default: 0
+    },
+
+    additionalAmount: {
+      type: Number,
+      default: 0
+    },
+
+    enabledModules: {
+      type: [String],
+      default: []
+    },
+
+    trialDays: {
+      type: Number,
+      default: 7,
+      min: 1,
+      max: 365
+    },
+
     trialEndsAt: Date,
 
     currentPeriodStart: Date,

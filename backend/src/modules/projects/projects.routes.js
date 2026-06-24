@@ -1,6 +1,7 @@
 const express = require("express");
 
 const auth = require("../../middlewares/auth");
+const requireModule = require("../../middlewares/requireModule");
 const Project = require("../../models/Project");
 const FinancialTransaction = require("../../models/FinancialTransaction");
 const {
@@ -13,6 +14,7 @@ const {
 } = require("../../services/projects/projectService");
 
 const router = express.Router();
+const projectsAccess = [auth, requireModule("projects")];
 
 function buildQuery(req) {
   const query = { tenantId: req.user.tenantId };
@@ -40,7 +42,7 @@ async function findProjectOr404(req, res) {
   return project;
 }
 
-router.get("/dashboard", auth, async (req, res) => {
+router.get("/dashboard", projectsAccess, async (req, res) => {
   const projects = await Project.find({ tenantId: req.user.tenantId }).lean();
   const totals = projects.reduce((acc, item) => {
     acc.totalProjects += 1;
@@ -81,12 +83,12 @@ router.get("/dashboard", auth, async (req, res) => {
   return res.json({ ok: true, ...totals });
 });
 
-router.get("/", auth, async (req, res) => {
+router.get("/", projectsAccess, async (req, res) => {
   const projects = await Project.find(buildQuery(req)).sort({ createdAt: -1 }).limit(200).lean();
   return res.json({ ok: true, projects: projects.map(serializeProject) });
 });
 
-router.get("/:id/report", auth, async (req, res) => {
+router.get("/:id/report", projectsAccess, async (req, res) => {
   const project = await findProjectOr404(req, res);
   if (!project) return;
   const projectId = String(project._id);
@@ -158,7 +160,7 @@ router.get("/:id/report", auth, async (req, res) => {
   });
 });
 
-router.get("/:id", auth, async (req, res) => {
+router.get("/:id", projectsAccess, async (req, res) => {
   const project = await findProjectOr404(req, res);
   if (!project) return;
   const spent = await syncProjectSpent({ tenantId: req.user.tenantId, projectId: String(project._id) });
@@ -166,7 +168,7 @@ router.get("/:id", auth, async (req, res) => {
   return res.json({ ok: true, project: serializeProject(project) });
 });
 
-router.post("/", auth, async (req, res) => {
+router.post("/", projectsAccess, async (req, res) => {
   try {
     const payload = buildProjectPayload(req.body || {});
     payload.tenantId = req.user.tenantId;
@@ -178,7 +180,7 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", projectsAccess, async (req, res) => {
   try {
     const project = await findProjectOr404(req, res);
     if (!project) return;
@@ -191,7 +193,7 @@ router.put("/:id", auth, async (req, res) => {
   }
 });
 
-router.put("/:id/budget", auth, async (req, res) => {
+router.put("/:id/budget", projectsAccess, async (req, res) => {
   try {
     const project = await findProjectOr404(req, res);
     if (!project) return;
@@ -212,7 +214,7 @@ router.put("/:id/budget", auth, async (req, res) => {
   }
 });
 
-router.post("/:id/complete", auth, async (req, res) => {
+router.post("/:id/complete", projectsAccess, async (req, res) => {
   const project = await findProjectOr404(req, res);
   if (!project) return;
   project.status = "completed";
@@ -221,7 +223,7 @@ router.post("/:id/complete", auth, async (req, res) => {
   return res.json({ ok: true, project: serializeProject(project) });
 });
 
-router.post("/:id/cancel", auth, async (req, res) => {
+router.post("/:id/cancel", projectsAccess, async (req, res) => {
   const project = await findProjectOr404(req, res);
   if (!project) return;
   project.status = "cancelled";
@@ -229,7 +231,7 @@ router.post("/:id/cancel", auth, async (req, res) => {
   return res.json({ ok: true, project: serializeProject(project) });
 });
 
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", projectsAccess, async (req, res) => {
   const project = await Project.findOneAndDelete({ _id: req.params.id, tenantId: req.user.tenantId });
   if (!project) return res.status(404).json({ ok: false, message: "Projeto não encontrado." });
   await FinancialTransaction.updateMany({ tenantId: req.user.tenantId, projectId: project._id }, { $unset: { projectId: 1 } }).catch(() => null);

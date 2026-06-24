@@ -5,9 +5,9 @@ const Tenant = require("../models/Tenant");
 const TenantSubscription = require("../models/TenantSubscription");
 const { mercadoPagoRequest } = require("./mercadopago/tenantMercadoPagoService");
 const { createBillingAuditLog } = require("./audit/billingAuditService");
+const { calculateTenantSubscription } = require("./subscription/subscriptionPricingService");
 
 const PROFESSIONAL_PLAN = "professional";
-const PROFESSIONAL_AMOUNT = 49.9;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const PAYMENT_EXPIRATION_MINUTES = 30;
 const GRACE_DAYS = 7;
@@ -94,6 +94,7 @@ async function createRenewalPayment(subscription, now) {
   }
 
   const tenant = await Tenant.findById(subscription.tenantId).lean();
+  const pricing = await calculateTenantSubscription({ tenantId: subscription.tenantId });
   const externalReference = `nexora_saas_renewal_${subscription.tenantId}_${Date.now()}`;
   const expiresAt = addMinutes(now, PAYMENT_EXPIRATION_MINUTES);
   const idempotencyKey = crypto
@@ -105,7 +106,7 @@ async function createRenewalPayment(subscription, now) {
     method: "POST",
     headers: { "X-Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
-      transaction_amount: PROFESSIONAL_AMOUNT,
+      transaction_amount: pricing.totalAmount,
       description: "NEXORA Gestão Inteligente - Renovação Plano Professional",
       payment_method_id: "pix",
       external_reference: externalReference,
@@ -131,7 +132,7 @@ async function createRenewalPayment(subscription, now) {
     gatewayPaymentId: String(payment.id),
     externalReference,
     status: payment.status || "pending",
-    amount: PROFESSIONAL_AMOUNT,
+    amount: pricing.totalAmount,
     qrCode,
     qrCodeBase64: transactionData.qr_code_base64 || "",
     copyPaste: qrCode,
@@ -289,7 +290,6 @@ function stopSubscriptionRenewalSchedule() {
 }
 
 module.exports = {
-  PROFESSIONAL_AMOUNT,
   PROFESSIONAL_PLAN,
   millisecondsUntilNextRun,
   runSubscriptionRenewalJob,

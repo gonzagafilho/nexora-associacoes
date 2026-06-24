@@ -1,5 +1,6 @@
 const express = require("express");
 const auth = require("../../middlewares/auth");
+const requireModule = require("../../middlewares/requireModule");
 const Invoice = require("../../models/Invoice");
 const Associate = require("../../models/Associate");
 const Tenant = require("../../models/Tenant");
@@ -81,8 +82,9 @@ function formatInvoicePix(result) {
 }
 
 const router = express.Router();
+const memberBillingAccess = [auth, requireModule("memberbilling")];
 
-router.post("/admin/associates/:associateId/generate", auth, async (req, res) => {
+router.post("/admin/associates/:associateId/generate", memberBillingAccess, async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
     const payload = await buildInvoicePayload({
@@ -154,7 +156,7 @@ router.post("/admin/associates/:associateId/generate", auth, async (req, res) =>
   }
 });
 
-router.post("/", auth, async (req, res) => {
+router.post("/", memberBillingAccess, async (req, res) => {
   try {
     const payload = await buildInvoicePayload({
       tenantId: req.user.tenantId,
@@ -173,7 +175,7 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-router.post("/:id/boleto/mercadopago", auth, async (req, res) => {
+router.post("/:id/boleto/mercadopago", memberBillingAccess, async (req, res) => {
   try {
     const result = await createBoletoForInvoice(
       req.params.id,
@@ -195,7 +197,7 @@ router.post("/:id/boleto/mercadopago", auth, async (req, res) => {
   }
 });
 
-router.get("/", auth, async (req, res) => {
+router.get("/", memberBillingAccess, async (req, res) => {
   const query = { tenantId: req.user.tenantId };
 
   if (req.query.status) query.status = req.query.status;
@@ -220,7 +222,7 @@ router.get("/", auth, async (req, res) => {
   return res.json({ ok: true, invoices });
 });
 
-router.get("/:id", auth, async (req, res) => {
+router.get("/:id", memberBillingAccess, async (req, res) => {
   const invoice = await Invoice.findOne({
     _id: req.params.id,
     tenantId: req.user.tenantId
@@ -235,7 +237,7 @@ router.get("/:id", auth, async (req, res) => {
   return res.json({ ok: true, invoice });
 });
 
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", memberBillingAccess, async (req, res) => {
   const invoice = await Invoice.findOne({
     _id: req.params.id,
     tenantId: req.user.tenantId
@@ -272,7 +274,7 @@ router.put("/:id", auth, async (req, res) => {
   return res.json({ ok: true, invoice });
 });
 
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", memberBillingAccess, async (req, res) => {
   const invoice = await Invoice.findOneAndUpdate(
     {
       _id: req.params.id,
@@ -296,7 +298,7 @@ router.delete("/:id", auth, async (req, res) => {
   return res.json({ ok: true, invoice });
 });
 
-router.post("/:id/mark-paid", auth, async (req, res) => {
+router.post("/:id/mark-paid", memberBillingAccess, async (req, res) => {
   const invoice = await Invoice.findOne({
     _id: req.params.id,
     tenantId: req.user.tenantId
@@ -317,7 +319,7 @@ router.post("/:id/mark-paid", auth, async (req, res) => {
   return res.json({ ok: true, invoice });
 });
 
-router.post("/generate-monthly", auth, async (req, res) => {
+router.post("/generate-monthly", memberBillingAccess, async (req, res) => {
   const TenantBillingSettings = require("../../models/TenantBillingSettings");
 
   const tenantId = req.user.tenantId;

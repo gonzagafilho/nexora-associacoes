@@ -64,7 +64,7 @@ test("POST /api/subscription/checkout gera Pix Mercado Pago real da assinatura S
   TenantSubscription.findOneAndUpdate = async (filter, update) => {
     assert.equal(String(filter.tenantId), tenantId);
     assert.equal(update.$setOnInsert.plan, "professional");
-    assert.equal(update.$setOnInsert.amount, 49.9);
+    assert.equal(update.$set.amount, 49.9);
     return {
       _id: "507f1f77bcf86cd799439099",
       tenantId,
@@ -74,6 +74,7 @@ test("POST /api/subscription/checkout gera Pix Mercado Pago real da assinatura S
   TenantSubscription.findOne = () => ({ lean: async () => null });
   SaasSubscriptionPayment.findOne = () => ({ lean: async () => null });
   User.findOne = () => ({ lean: async () => ({ email: "admin@associacao.local" }) });
+  Tenant.findById = () => ({ select: () => ({ lean: async () => ({ _id: tenantId, enabledModules: ["core", "financial"] }) }) });
 
   let savedPayment;
   SaasSubscriptionPayment.create = async (data) => {
@@ -165,6 +166,8 @@ test("webhook SaaS approved ativa assinatura uma única vez", async () => {
     ]);
     return paymentDoc;
   };
+
+  Tenant.findById = () => ({ select: () => ({ lean: async () => ({ _id: tenantId, enabledModules: ["core", "financial"] }) }) });
 
   let subscriptionUpdates = 0;
   let subscriptionUpdatePayload;
@@ -388,7 +391,7 @@ test("POST /api/subscription/admin/:tenantId/generate-pix gera PIX manual SaaS",
   SaasSubscriptionPayment.findOne = () => ({ lean: async () => null });
   Tenant.findById = (id) => {
     assert.equal(String(id), tenantId);
-    return { lean: async () => ({ _id: tenantId, email: "financeiro@nexora.test" }) };
+    return { lean: async () => ({ _id: tenantId, email: "financeiro@nexora.test", enabledModules: ["core", "financial"] }) };
   };
 
   let savedPayment;

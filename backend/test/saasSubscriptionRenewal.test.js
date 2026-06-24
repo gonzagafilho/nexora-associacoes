@@ -221,8 +221,12 @@ test("GET /api/subscription/admin/dashboard calcula métricas SaaS", async () =>
     assert.deepEqual(query, { status: "active" });
     return {
       select(field) {
-        assert.equal(field, "amount");
-        return lean([{ amount: 49.9 }, { amount: 49.9 }, { amount: 99.8 }]);
+        assert.equal(field, "amount baseAmount additionalAmount");
+        return lean([
+          { amount: 49.9, baseAmount: 49.9, additionalAmount: 0 },
+          { amount: 49.9, baseAmount: 49.9, additionalAmount: 0 },
+          { amount: 99.8, baseAmount: 49.9, additionalAmount: 49.9 }
+        ]);
       }
     };
   };
@@ -239,6 +243,8 @@ test("GET /api/subscription/admin/dashboard calcula métricas SaaS", async () =>
       trialSubscriptions: 2,
       overdueSubscriptions: 1,
       expiringNext7Days: 4,
+      monthlyRevenueBase: 149.7,
+      monthlyRevenueAdditional: 49.9,
       monthlyRevenue: 199.6,
       annualRevenue: 2395.2,
       totalTenants: 6
@@ -256,6 +262,9 @@ test("GET /api/subscription/admin/list retorna assinaturas SaaS paginadas com te
     plan: "professional",
     status: "active",
     amount: 49.9,
+    baseAmount: 49.9,
+    additionalAmount: 0,
+    enabledModules: ["core", "financial"],
     trialEndsAt: new Date("2026-05-31T23:59:59.000Z"),
     currentPeriodStart: createdAt,
     currentPeriodEnd: nextBillingDate,
@@ -345,6 +354,9 @@ test("GET /api/subscription/admin/list retorna assinaturas SaaS paginadas com te
       plan: "professional",
       status: "active",
       amount: 49.9,
+      baseAmount: 49.9,
+      additionalAmount: 0,
+      enabledModules: ["core", "financial"],
       trialEndsAt: "2026-05-31T23:59:59.000Z",
       currentPeriodStart: "2026-06-01T10:00:00.000Z",
       currentPeriodEnd: "2026-07-01T10:00:00.000Z",

@@ -16,6 +16,13 @@ const tenantSchema = new mongoose.Schema(
       enum: ["manual", "mercadopago", "cora"],
       default: "manual"
     },
+    enabledModules: {
+      type: [String],
+      default: [],
+      set: (values) => Array.isArray(values)
+        ? Array.from(new Set(values.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)))
+        : []
+    },
     status: {
       type: String,
       enum: ["active", "inactive", "blocked"],

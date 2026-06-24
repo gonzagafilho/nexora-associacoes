@@ -8,11 +8,14 @@ const TenantSubscription = require("../../models/TenantSubscription");
 const User = require("../../models/User");
 const { mercadoPagoRequest } = require("../../services/mercadopago/tenantMercadoPagoService");
 const { createBillingAuditLog } = require("../../services/audit/billingAuditService");
+const {
+  calculateTenantSubscription,
+  roundMoney
+} = require("../../services/subscription/subscriptionPricingService");
 
 const router = express.Router();
 
 const PROFESSIONAL_PLAN = "professional";
-const PROFESSIONAL_AMOUNT = 49.9;
 const PAYMENT_EXPIRATION_MINUTES = 30;
 
 function addMinutes(date, minutes) {
@@ -61,18 +64,27 @@ async function calculateSubscriptionDashboard(now = new Date()) {
     TenantSubscription.countDocuments({ status: "overdue" }),
     TenantSubscription.countDocuments({ nextBillingDate: { $lte: expiringLimit } }),
     Tenant.countDocuments({}),
-    TenantSubscription.find({ status: "active" }).select("amount").lean()
+    TenantSubscription.find({ status: "active" }).select("amount baseAmount additionalAmount").lean()
   ]);
 
-  const monthlyRevenue = activeRows.reduce((total, subscription) => {
-    return total + Number(subscription.amount || 0);
-  }, 0);
+  const revenue = activeRows.reduce((acc, subscription) => {
+    acc.base += Number(subscription.baseAmount || 0);
+    acc.additional += Number(subscription.additionalAmount || 0);
+    acc.total += Number(subscription.amount || 0);
+    return acc;
+  }, { base: 0, additional: 0, total: 0 });
+
+  const monthlyRevenueBase = roundMoney(revenue.base || 0);
+  const monthlyRevenueAdditional = roundMoney(revenue.additional || 0);
+  const monthlyRevenue = roundMoney(revenue.total || 0);
 
   return {
     activeSubscriptions,
     trialSubscriptions,
     overdueSubscriptions,
     expiringNext7Days,
+    monthlyRevenueBase,
+    monthlyRevenueAdditional,
     monthlyRevenue,
     annualRevenue: monthlyRevenue * 12,
     totalTenants
@@ -236,6 +248,9 @@ async function listAdminSubscriptions(query) {
       plan: subscription.plan,
       status: subscription.status,
       amount: subscription.amount || 0,
+      baseAmount: subscription.baseAmount || 0,
+      additionalAmount: subscription.additionalAmount || 0,
+      enabledModules: Array.isArray(subscription.enabledModules) ? subscription.enabledModules : [],
       trialEndsAt: subscription.trialEndsAt,
       currentPeriodStart: subscription.currentPeriodStart,
       currentPeriodEnd: subscription.currentPeriodEnd,
@@ -304,6 +319,7 @@ async function generateManualSaasPix(req, tenantId) {
     error.statusCode = 404;
     throw error;
   }
+  const pricing = await calculateTenantSubscription({ tenantId });
 
   const externalReference = `nexora_saas_manual_${tenantId}_${Date.now()}`;
   const expiresAt = addMinutes(now, PAYMENT_EXPIRATION_MINUTES);
@@ -316,8 +332,8 @@ async function generateManualSaasPix(req, tenantId) {
     method: "POST",
     headers: { "X-Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
-      transaction_amount: PROFESSIONAL_AMOUNT,
-      description: "NEXORA Gestão Inteligente - Cobrança manual Plano Professional",
+      transaction_amount: pricing.totalAmount,
+      description: "NEXORA Gestão Inteligente - Cobrança manual SaaS modular",
       payment_method_id: "pix",
       external_reference: externalReference,
       date_of_expiration: expiresAt.toISOString(),
@@ -341,7 +357,7 @@ async function generateManualSaasPix(req, tenantId) {
     gatewayPaymentId: String(payment.id),
     externalReference,
     status: payment.status || "pending",
-    amount: PROFESSIONAL_AMOUNT,
+    amount: pricing.totalAmount,
     qrCode,
     copyPaste: qrCode,
     qrCodeBase64: transactionData.qr_code_base64 || "",
@@ -540,10 +556,12 @@ router.get("/me", auth, async (req, res) => {
   const subscription = await TenantSubscription.findOne({
     tenantId: req.user.tenantId
   }).lean();
+  const pricing = await calculateTenantSubscription({ tenantId: req.user.tenantId });
 
   return res.json({
     ok: true,
-    subscription
+    subscription,
+    pricing
   });
 });
 
@@ -558,6 +576,7 @@ router.post("/checkout", auth, async (req, res) => {
     }
 
     const tenantId = req.user.tenantId;
+    const pricing = await calculateTenantSubscription({ tenantId });
     const subscription = await TenantSubscription.findOneAndUpdate(
       { tenantId },
       {
@@ -565,7 +584,13 @@ router.post("/checkout", auth, async (req, res) => {
           tenantId,
           plan: PROFESSIONAL_PLAN,
           status: "trialing",
-          amount: PROFESSIONAL_AMOUNT
+          trialDays: 7
+        },
+        $set: {
+          amount: pricing.totalAmount,
+          baseAmount: pricing.baseAmount,
+          additionalAmount: pricing.additionalAmount,
+          enabledModules: pricing.enabledModules
         }
       },
       { new: true, upsert: true }
@@ -597,6 +622,9 @@ router.post("/checkout", auth, async (req, res) => {
         paymentId: existing.gatewayPaymentId || existing.externalId,
         status: existing.status,
         amount: existing.amount,
+        baseAmount: pricing.baseAmount,
+        additionalAmount: pricing.additionalAmount,
+        enabledModules: pricing.enabledModules,
         qrCode: existing.qrCode,
         qrCodeBase64: existing.qrCodeBase64,
         copyPaste: existing.copyPaste || existing.qrCode,
@@ -616,7 +644,7 @@ router.post("/checkout", auth, async (req, res) => {
       method: "POST",
       headers: { "X-Idempotency-Key": idempotencyKey },
       body: JSON.stringify({
-        transaction_amount: PROFESSIONAL_AMOUNT,
+        transaction_amount: pricing.totalAmount,
         description: "NEXORA Gestão Inteligente - Plano Professional",
         payment_method_id: "pix",
         external_reference: externalReference,
@@ -643,7 +671,7 @@ router.post("/checkout", auth, async (req, res) => {
       gatewayPaymentId: String(payment.id),
       externalReference,
       status: payment.status || "pending",
-      amount: PROFESSIONAL_AMOUNT,
+      amount: pricing.totalAmount,
       qrCode,
       copyPaste: qrCode,
       qrCodeBase64,
@@ -672,6 +700,9 @@ router.post("/checkout", auth, async (req, res) => {
       paymentId: saved.gatewayPaymentId || saved.externalId,
       status: saved.status,
       amount: saved.amount,
+      baseAmount: pricing.baseAmount,
+      additionalAmount: pricing.additionalAmount,
+      enabledModules: pricing.enabledModules,
       qrCode: saved.qrCode,
       qrCodeBase64: saved.qrCodeBase64,
       copyPaste: saved.copyPaste || saved.qrCode,
@@ -763,7 +794,7 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
   const paidAt = getApprovedAt(payment);
   subscriptionPayment.status = "approved";
   subscriptionPayment.paidAt = subscriptionPayment.paidAt || paidAt;
-  subscriptionPayment.amount = Number(payment.transaction_amount ?? subscriptionPayment.amount ?? PROFESSIONAL_AMOUNT);
+  subscriptionPayment.amount = Number(payment.transaction_amount ?? subscriptionPayment.amount ?? 0);
   await subscriptionPayment.save();
 
   if (wasAlreadyPaid) {
@@ -781,6 +812,7 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
 
   const periodStart = new Date();
   const periodEnd = addDays(periodStart, 30);
+  const pricing = await calculateTenantSubscription({ tenantId: subscriptionPayment.tenantId });
   await TenantSubscription.findOneAndUpdate(
     {
       _id: subscriptionPayment.subscriptionId,
@@ -790,7 +822,10 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
       $set: {
         status: "active",
         plan: PROFESSIONAL_PLAN,
-        amount: PROFESSIONAL_AMOUNT,
+        amount: pricing.totalAmount,
+        baseAmount: pricing.baseAmount,
+        additionalAmount: pricing.additionalAmount,
+        enabledModules: pricing.enabledModules,
         currentPeriodStart: periodStart,
         currentPeriodEnd: periodEnd,
         nextBillingDate: periodEnd,

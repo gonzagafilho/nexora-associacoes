@@ -1,10 +1,12 @@
 const express = require("express");
 const auth = require("../../middlewares/auth");
+const requireModule = require("../../middlewares/requireModule");
 const Associate = require("../../models/Associate");
 
 const router = express.Router();
+const associatesAccess = [auth, requireModule("associates")];
 
-router.post("/", auth, async (req, res) => {
+router.post("/", associatesAccess, async (req, res) => {
   try {
     const associate = await Associate.create({
       tenantId: req.user.tenantId,
@@ -33,7 +35,7 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-router.get("/", auth, async (req, res) => {
+router.get("/", associatesAccess, async (req, res) => {
   const query = { tenantId: req.user.tenantId };
 
   if (req.query.status) query.status = req.query.status;
@@ -52,7 +54,7 @@ router.get("/", auth, async (req, res) => {
   return res.json({ ok: true, associates });
 });
 
-router.get("/:id", auth, async (req, res) => {
+router.get("/:id", associatesAccess, async (req, res) => {
   const associate = await Associate.findOne({
     _id: req.params.id,
     tenantId: req.user.tenantId
@@ -65,7 +67,7 @@ router.get("/:id", auth, async (req, res) => {
   return res.json({ ok: true, associate });
 });
 
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", associatesAccess, async (req, res) => {
   const associate = await Associate.findOneAndUpdate(
     { _id: req.params.id, tenantId: req.user.tenantId },
     {
@@ -93,7 +95,7 @@ router.put("/:id", auth, async (req, res) => {
   return res.json({ ok: true, associate });
 });
 
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", associatesAccess, async (req, res) => {
   const associate = await Associate.findOneAndUpdate(
     { _id: req.params.id, tenantId: req.user.tenantId },
     { status: "inactive" },

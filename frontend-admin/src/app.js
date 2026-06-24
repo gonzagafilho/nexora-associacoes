@@ -27,6 +27,19 @@ const DEFAULT_BRANDING = Object.freeze({
   activeLogoUrl: "/nexora-logo.png"
 });
 
+const REQUIRED_MODULE_CODES = ["core", "financial"];
+const FALLBACK_SAAS_MODULES = [
+  { code: "core", name: "Core", description: "Plataforma base", monthlyPrice: 49.9, active: true },
+  { code: "financial", name: "Financeiro", description: "Fluxo financeiro", monthlyPrice: 0, active: true },
+  { code: "associates", name: "Associados", description: "Cadastro de associados", monthlyPrice: 20, active: true },
+  { code: "memberbilling", name: "Cobrança de Associados", description: "Mensalidades e cobranças", monthlyPrice: 20, active: true },
+  { code: "projects", name: "Projetos", description: "Obras e projetos", monthlyPrice: 20, active: true },
+  { code: "assets", name: "Patrimônio", description: "Gestão de ativos", monthlyPrice: 15, active: true },
+  { code: "protocols", name: "Protocolos", description: "Fluxos de protocolos", monthlyPrice: 15, active: true },
+  { code: "people", name: "Pessoas", description: "Gestão de pessoas", monthlyPrice: 20, active: true },
+  { code: "pwa", name: "PWA", description: "App web progressivo", monthlyPrice: 20, active: true }
+];
+
 const icons = {
   dashboard: "M3 13h8V3H3v10Zm10 8h8V11h-8v10ZM3 21h8v-6H3v6Zm10-12h8V3h-8v6Z",
   users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87m-2-12a4 4 0 0 1 0 7.75",
@@ -50,6 +63,40 @@ function dateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dat
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function toast(message, error = false) { const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; toastRoot.append(el); setTimeout(() => el.remove(), 4200); }
 function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando", planning: "Planejamento", paused: "Pausado", completed: "Concluído" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
+function normalizeModuleCode(value) { return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+function normalizeModuleCodes(values = []) { return Array.from(new Set((Array.isArray(values) ? values : []).map((item) => normalizeModuleCode(item)).filter(Boolean))); }
+function tenantEnabledModules() {
+  const configured = normalizeModuleCodes(state.me?.tenant?.enabledModules || state.tenant?.enabledModules || []);
+  return configured.length ? configured : FALLBACK_SAAS_MODULES.map((item) => item.code);
+}
+function hasModuleAccess(moduleCode) {
+  const normalized = normalizeModuleCode(moduleCode);
+  if (!normalized) return true;
+  return tenantEnabledModules().includes(normalized);
+}
+function signupModuleRow(item, checked) {
+  const required = REQUIRED_MODULE_CODES.includes(item.code);
+  return `<label class="field" style="padding:10px;border:1px solid var(--line);border-radius:10px"><span style="display:flex;align-items:center;justify-content:space-between;gap:8px"><strong>${escapeHtml(item.name)}</strong><strong>${money(item.monthlyPrice || 0)}</strong></span><small style="color:var(--muted)">${escapeHtml(item.description || "")}</small><span style="margin-top:8px;display:flex;align-items:center;gap:8px"><input type="checkbox" name="enabledModules" value="${escapeHtml(item.code)}" ${checked ? "checked" : ""} ${required ? "disabled" : ""}>${required ? "Obrigatório" : "Selecionar módulo"}</span></label>`;
+}
+function readSignupModules(form) {
+  const selected = new Set(REQUIRED_MODULE_CODES);
+  form.querySelectorAll('input[name="enabledModules"]:checked').forEach((input) => selected.add(normalizeModuleCode(input.value)));
+  return Array.from(selected);
+}
+function calculateSignupTotal(modules, selectedCodes) {
+  const selected = new Set(normalizeModuleCodes(selectedCodes));
+  return Number(modules.filter((item) => selected.has(normalizeModuleCode(item.code))).reduce((sum, item) => sum + Number(item.monthlyPrice || 0), 0).toFixed(2));
+}
+function moduleNameByCode(code) {
+  const normalized = normalizeModuleCode(code);
+  const found = FALLBACK_SAAS_MODULES.find((item) => item.code === normalized);
+  return found?.name || normalized || "—";
+}
+function formatEnabledModules(codes = []) {
+  const normalized = normalizeModuleCodes(codes);
+  if (!normalized.length) return "Todos";
+  return normalized.map((code) => moduleNameByCode(code)).join(", ");
+}
 function field(name, label, value = "", type = "text", required = false, extra = "") { return `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${extra}></label>`; }
 function selectField(name, label, options, value) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${options.map(([key, text]) => `<option value="${key}" ${key === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`; }
 function statusFilter(value = "") { return `<select class="select" data-filter-status style="max-width:190px"><option value="">Todos os status</option><option value="pending" ${value === "pending" ? "selected" : ""}>Pendentes</option><option value="paid" ${value === "paid" ? "selected" : ""}>Pagas</option><option value="overdue" ${value === "overdue" ? "selected" : ""}>Vencidas</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Canceladas</option></select>`; }
@@ -87,20 +134,8 @@ function logout() {
 
 function renderLogin() {
   const branding = resolveBranding(); applyBrandingTheme(branding);
-  app.innerHTML = `<main class="login-page"><section class="login-hero"><div class="brand brand-hero">${brandLogoHtml(branding, 96, "brand-logo-lg")}<div><small>PLATAFORMA MULTI-TENANT</small><strong>${escapeHtml(branding.organizationName)}</strong></div></div><h1>Gestão inteligente para associações.</h1><p>Cobranças, associados e financeiro em um só lugar.</p><div class="hero-points"><div class="hero-point"><span>✓</span><strong>PIX automático</strong></div><div class="hero-point"><span>✓</span><strong>Boleto e lotérica</strong></div><div class="hero-point"><span>✓</span><strong>Baixa automática</strong></div><div class="hero-point"><span>✓</span><strong>Portal do associado</strong></div><div class="hero-point"><span>✓</span><strong>Multi-tenant</strong></div><div class="hero-point"><span>✓</span><strong>Mercado Pago integrado</strong></div><div class="hero-point"><span>✓</span><strong>PDF Premium</strong></div><div class="hero-point"><span>✓</span><strong>Relatórios financeiros</strong></div></div><div class="pricing-card"><small>Plano Profissional</small><strong>30 dias grátis</strong><span>Depois R$ 49,90/mês</span></div><footer class="login-footer"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></footer></section><section class="login-panel"><form class="login-card" data-login><div class="brand brand-card">${brandLogoHtml(branding, 72, "brand-logo-card")}<div><small>NEXORA GESTÃO</small><strong>${escapeHtml(branding.organizationName)}</strong></div></div><h2>Bem-vindo</h2><p>Acesse o painel administrativo da sua organização.</p>${field("email", "E-mail", "", "email", true, 'autocomplete="email"')}${field("password", "Senha", "", "password", true, 'autocomplete="current-password"')}<button class="button button-primary button-block" type="submit">Entrar</button><button class="button button-secondary button-block" data-create-tenant type="button" style="margin-top:12px">Criar Associação</button><div class="login-trial-note">Plano Profissional • 30 dias grátis • Depois R$ 49,90/mês</div><div class="mp-feedback" data-login-error></div></form></section></main>`;
-  app.querySelector("[data-create-tenant]")?.addEventListener("click", () => openModal("Criar Associação", `<form data-tenant-form><div class="form-grid">${field("associationName", "Nome da Associação", "", "text", true)}${field("ownerName", "Nome do Responsável", "", "text", true)}${field("phone", "Telefone", "", "tel", true)}${field("email", "E-mail", "", "email", true)}${field("password", "Senha", "", "password", true)}<div class="detail-item span-2"><small>Plano</small>Plano Profissional • 30 dias grátis • Depois R$ XX,90/mês</div></div></form>`, async () => {
-  const form = document.querySelector("[data-tenant-form]");
-  if (!form.reportValidity()) return false;
-  const data = Object.fromEntries(new FormData(form));
-  const result = await apiRequest("/api/public/signup", {
-    method: "POST",
-    body: JSON.stringify(data)
-  });
-  saveSession(result);
-  state.route = "dashboard";
-  location.hash = "dashboard";
-  await renderShell();
-}, "Cancelar", "Criar minha associação"));
+  app.innerHTML = `<main class="login-page"><section class="login-hero"><div class="brand brand-hero">${brandLogoHtml(branding, 96, "brand-logo-lg")}<div><small>PLATAFORMA MULTI-TENANT</small><strong>${escapeHtml(branding.organizationName)}</strong></div></div><h1>Gestão inteligente para associações.</h1><p>Cobranças, associados e financeiro em um só lugar.</p><div class="hero-points"><div class="hero-point"><span>✓</span><strong>PIX automático</strong></div><div class="hero-point"><span>✓</span><strong>Boleto e lotérica</strong></div><div class="hero-point"><span>✓</span><strong>Baixa automática</strong></div><div class="hero-point"><span>✓</span><strong>Portal do associado</strong></div><div class="hero-point"><span>✓</span><strong>Multi-tenant</strong></div><div class="hero-point"><span>✓</span><strong>Mercado Pago integrado</strong></div><div class="hero-point"><span>✓</span><strong>PDF Premium</strong></div><div class="hero-point"><span>✓</span><strong>Relatórios financeiros</strong></div></div><div class="pricing-card"><small>Plano Modular</small><strong>7 dias grátis</strong><span>Core a partir de R$ 49,90/mês</span></div><footer class="login-footer"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></footer></section><section class="login-panel"><form class="login-card" data-login><div class="brand brand-card">${brandLogoHtml(branding, 72, "brand-logo-card")}<div><small>NEXORA GESTÃO</small><strong>${escapeHtml(branding.organizationName)}</strong></div></div><h2>Bem-vindo</h2><p>Acesse o painel administrativo da sua organização.</p>${field("email", "E-mail", "", "email", true, 'autocomplete="email"')}${field("password", "Senha", "", "password", true, 'autocomplete="current-password"')}<button class="button button-primary button-block" type="submit">Entrar</button><button class="button button-secondary button-block" data-create-tenant type="button" style="margin-top:12px">Criar Associação</button><div class="login-trial-note">Plano Modular • 7 dias grátis • Valor conforme módulos contratados</div><div class="mp-feedback" data-login-error></div></form></section></main>`;
+  app.querySelector("[data-create-tenant]")?.addEventListener("click", openTenantSignupModal);
   app.querySelector("[data-login]").addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.currentTarget.querySelector("button"); const errorEl = app.querySelector("[data-login-error]");
     button.disabled = true; button.textContent = "Entrando…"; errorEl.textContent = "";
@@ -113,13 +148,60 @@ function renderLogin() {
   });
 }
 
+async function openTenantSignupModal() {
+  let catalog = { modules: FALLBACK_SAAS_MODULES, requiredModuleCodes: REQUIRED_MODULE_CODES };
+  try {
+    catalog = await apiRequest("/api/public/saas-modules", { method: "GET" });
+  } catch (error) {
+    toast("Catálogo indisponível no momento. Usando módulos padrão.");
+  }
+
+  const requiredCodes = normalizeModuleCodes(catalog.requiredModuleCodes || REQUIRED_MODULE_CODES);
+  const modules = (catalog.modules || FALLBACK_SAAS_MODULES)
+    .map((item) => ({ ...item, code: normalizeModuleCode(item.code), monthlyPrice: Number(item.monthlyPrice || 0) }))
+    .filter((item) => item.code);
+
+  openModal("Criar Associação", `<form data-tenant-form><div class="form-grid">${field("associationName", "Nome da Associação", "", "text", true)}${field("ownerName", "Nome do Responsável", "", "text", true)}${field("phone", "Telefone", "", "tel", true)}${field("email", "E-mail", "", "email", true)}${field("password", "Senha", "", "password", true)}<div class="field span-2"><span>Módulos contratados</span><div class="form-grid">${modules.map((item) => signupModuleRow(item, requiredCodes.includes(item.code))).join("")}</div></div><div class="detail-item span-2" data-signup-total><small>Total mensal</small>${money(calculateSignupTotal(modules, requiredCodes))}</div><div class="detail-item span-2"><small>Trial</small>7 dias com status trialing</div></div></form>`, async () => {
+    const form = document.querySelector("[data-tenant-form]");
+    if (!form.reportValidity()) return false;
+    const data = Object.fromEntries(new FormData(form));
+    data.enabledModules = readSignupModules(form);
+    const result = await apiRequest("/api/public/signup", {
+      method: "POST",
+      body: JSON.stringify(data)
+    });
+    saveSession(result);
+    state.route = "dashboard";
+    location.hash = "dashboard";
+    await renderShell();
+  }, "Cancelar", "Criar minha associação");
+
+  const form = document.querySelector("[data-tenant-form]");
+  const totalEl = document.querySelector("[data-signup-total]");
+  const refreshTotal = () => {
+    totalEl.innerHTML = `<small>Total mensal</small>${money(calculateSignupTotal(modules, readSignupModules(form)))}`;
+  };
+  form?.querySelectorAll('input[name="enabledModules"]').forEach((input) => {
+    if (!input.disabled) input.addEventListener("change", refreshTotal);
+  });
+}
+
 const navItems = [
-  ["dashboard", "Dashboard", "dashboard"], ["associados", "Associados", "users"], ["mensalidades", "Mensalidades", "calendar"],
-  ["cobrancas", "Cobranças", "receipt"], ["projetos", "Projetos", "projects"], ["financeiro", "Financeiro", "card"], ["mercadopago", "Mercado Pago", "card"], ["saas", "SaaS", "saas"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
+  ["dashboard", "Dashboard", "dashboard", "core"],
+  ["associados", "Associados", "users", "associates"],
+  ["mensalidades", "Mensalidades", "calendar", "memberbilling"],
+  ["cobrancas", "Cobranças", "receipt", "memberbilling"],
+  ["projetos", "Projetos", "projects", "projects"],
+  ["financeiro", "Financeiro", "card", "financial"],
+  ["mercadopago", "Mercado Pago", "card", "financial"],
+  ["saas", "SaaS", "saas", "core"],
+  ["assinatura", "Assinatura", "star", "core"],
+  ["configuracoes", "Configurações", "settings", "core"]
 ];
+function visibleNavItems() { return navItems.filter(([, , , moduleCode]) => hasModuleAccess(moduleCode)); }
 function shellHtml() {
   const branding = resolveBranding(); applyBrandingTheme(branding);
-  return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand brand-shell">${brandLogoHtml(branding, 38, "brand-logo-shell")}<div><span>${escapeHtml(currentTenantName())}</span><small>Nexora Gestão</small></div></div><nav class="nav">${navItems.map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></div></aside><section class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="topbar-brand">${brandLogoHtml(branding, 30, "brand-logo-topbar")}<div><div class="tenant-name">${escapeHtml(currentTenantName())}</div><small>${escapeHtml(branding.organizationName)}</small></div></div></div><div class="user-menu"><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main><footer class="app-footer"><strong>${escapeHtml(currentTenantName())}</strong><span>NEXORA © 2026 • Plataforma de Gestão Inteligente</span></footer></section></div>`;
+  return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand brand-shell">${brandLogoHtml(branding, 38, "brand-logo-shell")}<div><span>${escapeHtml(currentTenantName())}</span><small>Nexora Gestão</small></div></div><nav class="nav">${visibleNavItems().map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></div></aside><section class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="topbar-brand">${brandLogoHtml(branding, 30, "brand-logo-topbar")}<div><div class="tenant-name">${escapeHtml(currentTenantName())}</div><small>${escapeHtml(branding.organizationName)}</small></div></div></div><div class="user-menu"><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main><footer class="app-footer"><strong>${escapeHtml(currentTenantName())}</strong><span>NEXORA © 2026 • Plataforma de Gestão Inteligente</span></footer></section></div>`;
 }
 async function renderShell() {
   if (!state.token) return renderLogin();
@@ -129,7 +211,14 @@ async function renderShell() {
   await renderRoute();
 }
 function setRoute(route) { state.route = route; document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.route === route)); const sidebar = app.querySelector("[data-sidebar]"); if (sidebar) sidebar.classList.remove("open"); }
-window.addEventListener("hashchange", async () => { if (!state.token) return; setRoute(location.hash.replace("#", "") || "dashboard"); await renderRoute(); });
+window.addEventListener("hashchange", async () => {
+  if (!state.token) return;
+  const target = location.hash.replace("#", "") || "dashboard";
+  const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
+  setRoute(visibleRoutes.has(target) ? target : "dashboard");
+  if (state.route === "dashboard" && target !== "dashboard") location.hash = "dashboard";
+  await renderRoute();
+});
 function content() { return app.querySelector("[data-content]"); }
 function loading() { content().innerHTML = `<div class="metrics"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; }
 function pageHead(title, subtitle, actions = "") { return `<header class="page-head"><div><h1>${title}</h1><p>${subtitle}</p></div><div class="actions">${actions}</div></header>`; }
@@ -138,6 +227,11 @@ async function renderRoute() {
   loading();
   try {
     const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
+    const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
+    if (!visibleRoutes.has(state.route)) {
+      setRoute("dashboard");
+      location.hash = "dashboard";
+    }
     await (routes[state.route] || renderDashboard)();
   } catch (error) { content().innerHTML = `<div class="card empty">Não foi possível carregar esta tela.<br><small>${escapeHtml(error.message)}</small></div>`; toast(error.message, true); }
 }
@@ -561,7 +655,7 @@ function renderSaasSubscriptionRows(items) {
   }
 
   return '<div class="table-wrap saas-table-wrap"><table class="table saas-table"><thead><tr><th>Associação</th><th>Plano</th><th>Status</th><th>Valor</th><th>Próxima cobrança</th><th>Fim do trial</th><th>Último pagamento</th><th>Status último pagamento</th><th>Ações</th></tr></thead><tbody>' +
-    items.map((item) => '<tr><td><div class="cell-title">' + escapeHtml(item.tenantName || "—") + '</div><div class="cell-sub">' + escapeHtml(item.tenantSlug || item.tenantId || "—") + '</div></td><td>' + escapeHtml(planLabel(item.plan)) + '</td><td>' + badge(item.status) + '</td><td>' + money(item.amount) + '</td><td>' + date(item.nextBillingDate) + '</td><td>' + date(item.trialEndsAt) + '</td><td><div class="cell-title">' + date(item.lastPaymentAt) + '</div><div class="cell-sub">' + escapeHtml(item.lastPaymentId || "—") + '</div></td><td>' + (item.lastPaymentStatus ? badge(item.lastPaymentStatus) : '<span class="cell-sub">—</span>') + '</td><td><button class="button button-secondary button-sm" type="button" data-generate-saas-pix="' + escapeHtml(item.tenantId || "") + '">Gerar novo PIX</button></td></tr>').join("") +
+    items.map((item) => '<tr><td><div class="cell-title">' + escapeHtml(item.tenantName || "—") + '</div><div class="cell-sub">' + escapeHtml(item.tenantSlug || item.tenantId || "—") + '</div></td><td>' + escapeHtml(planLabel(item.plan)) + '<div class="cell-sub">' + escapeHtml(formatEnabledModules(item.enabledModules)) + '</div></td><td>' + badge(item.status) + '</td><td><div class="cell-title">' + money(item.amount) + '</div><div class="cell-sub">Base ' + money(item.baseAmount) + ' + Adicional ' + money(item.additionalAmount) + '</div></td><td>' + date(item.nextBillingDate) + '</td><td>' + date(item.trialEndsAt) + '</td><td><div class="cell-title">' + date(item.lastPaymentAt) + '</div><div class="cell-sub">' + escapeHtml(item.lastPaymentId || "—") + '</div></td><td>' + (item.lastPaymentStatus ? badge(item.lastPaymentStatus) : '<span class="cell-sub">—</span>') + '</td><td><button class="button button-secondary button-sm" type="button" data-generate-saas-pix="' + escapeHtml(item.tenantId || "") + '">Gerar novo PIX</button></td></tr>').join("") +
     '</tbody></table></div>';
 }
 
@@ -700,6 +794,8 @@ async function renderSaasDashboard(activeTab = "dashboard") {
       metricCard("Em Trial", data.trialSubscriptions, subscriptionStatusLabel("trialing"), "is-info") +
       metricCard("Inadimplentes", data.overdueSubscriptions, subscriptionStatusLabel("overdue"), data.overdueSubscriptions > 0 ? "is-danger" : "") +
       metricCard("Vencendo em 7 dias", data.expiringNext7Days, "Próximas renovações", "is-warning") +
+      metricCard("Receita Base", money(data.monthlyRevenueBase), "Módulos obrigatórios", "is-money") +
+      metricCard("Receita Adicional", money(data.monthlyRevenueAdditional), "Módulos extras", "is-money") +
       metricCard("Receita Mensal", money(data.monthlyRevenue), "Assinaturas ativas", "is-money") +
       metricCard("Receita Anual", money(data.annualRevenue), "Projeção 12 meses", "is-money") +
       metricCard("Total de Associações", data.totalTenants, "Tenants cadastrados", "is-info") +
@@ -726,25 +822,31 @@ async function renderSaasDashboard(activeTab = "dashboard") {
 async function renderSubscription() {
   const me = await api("/api/me");
   const sub = me.subscription || {};
+  const enabledModules = normalizeModuleCodes(sub.enabledModules || me.tenant?.enabledModules || []);
   const plan = sub.plan === "professional" ? "Profissional" : (sub.plan || "—");
   const status = sub.status === "trialing" ? "Teste grátis" : (sub.status || "—");
   const trialUntil = sub.trialEndsAt ? new Date(sub.trialEndsAt).toLocaleDateString("pt-BR") : "—";
   const now = new Date();
   const end = sub.trialEndsAt ? new Date(sub.trialEndsAt) : null;
   const daysLeft = end ? Math.max(0, Math.ceil((end - now) / 86400000)) : 0;
-  const monthlyAmount = sub.amount || 0;
-  const nextBilling = sub.nextBillingAt ? new Date(sub.nextBillingAt).toLocaleDateString("pt-BR") : "Após o período de teste";
+  const monthlyAmount = Number(sub.amount || 0);
+  const baseAmount = Number(sub.baseAmount || 0);
+  const additionalAmount = Number(sub.additionalAmount || 0);
+  const nextBilling = sub.nextBillingDate ? new Date(sub.nextBillingDate).toLocaleDateString("pt-BR") : "Após o período de teste";
 
   content().innerHTML = `${pageHead("Assinatura", "Plano comercial e cobrança da plataforma NEXORA.")}<section class="metrics">
     ${metric("Plano atual", plan, status, true)}
     ${metric("Status", status)}
     ${metric("Trial até", trialUntil, `${daysLeft} dias restantes`, true)}
-    ${metric("Valor mensal", money(monthlyAmount))}
+    ${metric("Base mensal", money(baseAmount))}
+    ${metric("Módulos adicionais", money(additionalAmount), enabledModules.length ? formatEnabledModules(enabledModules) : "", true)}
+    ${metric("Valor mensal", money(monthlyAmount), "Base + adicionais")}
     ${metric("Próxima cobrança", nextBilling, "", true)}
   </section>
   <section class="card">
     <h2>Assinar agora</h2>
-    <p>Ao assinar, a associação mantém o acesso ao painel, cobranças, PIX, boleto, PDF premium e baixa automática.</p>
+    <p>Ao assinar, a associação mantém o acesso aos módulos ativos e aos recursos contratados (cobranças, PIX, boleto, PDF premium e baixa automática).</p>
+    <p><strong>Módulos ativos:</strong> ${escapeHtml(formatEnabledModules(enabledModules))}</p>
     <div class="actions" style="margin-top:18px">
       <button class="button button-primary" type="button" data-subscribe-now>Assinar Agora</button>
     </div>

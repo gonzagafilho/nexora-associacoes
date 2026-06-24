@@ -2,11 +2,13 @@ const express = require("express");
 const { buildMonthlyFinancialReport } = require("../../services/financial/monthlyFinancialReportService");
 const { generateMonthlyFinancialReportPdf } = require("../../services/financial/monthlyFinancialReportPdfService");
 const auth = require("../../middlewares/auth");
+const requireModule = require("../../middlewares/requireModule");
 const FinancialTransaction = require("../../models/FinancialTransaction");
 const Project = require("../../models/Project");
 const { syncProjectSpent } = require("../../services/projects/projectService");
 
 const router = express.Router();
+const financialAccess = [auth, requireModule("financial")];
 
 const TYPES = new Set(["income", "expense"]);
 const STATUSES = new Set(["pending", "paid", "cancelled", "overdue"]);
@@ -169,7 +171,7 @@ function serialize(transaction) {
 }
 
 
-router.get("/reports/monthly", auth, async (req, res) => {
+router.get("/reports/monthly", financialAccess, async (req, res) => {
   try {
     const report = await buildMonthlyFinancialReport({ tenantId: req.user.tenantId, month: req.query.month });
     return res.json(report);
@@ -178,7 +180,7 @@ router.get("/reports/monthly", auth, async (req, res) => {
   }
 });
 
-router.get("/reports/monthly/pdf", auth, async (req, res) => {
+router.get("/reports/monthly/pdf", financialAccess, async (req, res) => {
   try {
     const report = await buildMonthlyFinancialReport({ tenantId: req.user.tenantId, month: req.query.month });
     const pdf = await generateMonthlyFinancialReportPdf(report);
@@ -194,7 +196,7 @@ router.get("/reports/monthly/pdf", auth, async (req, res) => {
   }
 });
 
-router.get("/reports/monthly/pdf/download", auth, async (req, res) => {
+router.get("/reports/monthly/pdf/download", financialAccess, async (req, res) => {
   try {
     const report = await buildMonthlyFinancialReport({ tenantId: req.user.tenantId, month: req.query.month });
     const pdf = await generateMonthlyFinancialReportPdf(report);
@@ -204,7 +206,7 @@ router.get("/reports/monthly/pdf/download", auth, async (req, res) => {
   }
 });
 
-router.get("/summary", auth, async (req, res) => {
+router.get("/summary", financialAccess, async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
     const transactions = await FinancialTransaction.find({ tenantId }).lean();
@@ -233,7 +235,7 @@ router.get("/summary", auth, async (req, res) => {
   }
 });
 
-router.get("/transactions", auth, async (req, res) => {
+router.get("/transactions", financialAccess, async (req, res) => {
   const page = toPositiveInt(req.query.page, 1, 10000);
   const limit = toPositiveInt(req.query.limit, 20, 100);
   const skip = (page - 1) * limit;
@@ -245,7 +247,7 @@ router.get("/transactions", auth, async (req, res) => {
   return res.json({ ok: true, items: transactions.map(serialize), page, limit, total, totalPages: Math.ceil(total / limit) || 0 });
 });
 
-router.post("/transactions", auth, async (req, res) => {
+router.post("/transactions", financialAccess, async (req, res) => {
   try {
     const payload = buildPayload(req);
     validateRequired(payload);
@@ -260,7 +262,7 @@ router.post("/transactions", auth, async (req, res) => {
   }
 });
 
-router.put("/transactions/:id", auth, async (req, res) => {
+router.put("/transactions/:id", financialAccess, async (req, res) => {
   try {
     const transaction = await FinancialTransaction.findOne({ _id: req.params.id, tenantId: req.user.tenantId });
     if (!transaction) return res.status(404).json({ ok: false, message: "Transação não encontrada." });
@@ -278,7 +280,7 @@ router.put("/transactions/:id", auth, async (req, res) => {
   }
 });
 
-router.post("/transactions/:id/pay", auth, async (req, res) => {
+router.post("/transactions/:id/pay", financialAccess, async (req, res) => {
   const transaction = await FinancialTransaction.findOne({ _id: req.params.id, tenantId: req.user.tenantId });
   if (!transaction) return res.status(404).json({ ok: false, message: "Transação não encontrada." });
   if (transaction.status === "cancelled") return res.status(409).json({ ok: false, message: "Transação cancelada não pode ser paga." });
@@ -290,7 +292,7 @@ router.post("/transactions/:id/pay", auth, async (req, res) => {
   return res.json({ ok: true, transaction: serialize(transaction) });
 });
 
-router.post("/transactions/:id/cancel", auth, async (req, res) => {
+router.post("/transactions/:id/cancel", financialAccess, async (req, res) => {
   const transaction = await FinancialTransaction.findOne({ _id: req.params.id, tenantId: req.user.tenantId });
   if (!transaction) return res.status(404).json({ ok: false, message: "Transação não encontrada." });
   transaction.status = "cancelled";

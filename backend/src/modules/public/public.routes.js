@@ -8,6 +8,12 @@ const TenantBranding = require("../../models/TenantBranding");
 const TenantBillingSettings = require("../../models/TenantBillingSettings");
 const TenantMercadoPagoSettings = require("../../models/TenantMercadoPagoSettings");
 const TenantSubscription = require("../../models/TenantSubscription");
+const {
+  calculateTenantSubscription,
+  REQUIRED_MODULE_CODES,
+  listActiveSaasModules,
+  normalizeModuleCodes
+} = require("../../services/subscription/subscriptionPricingService");
 
 const router = express.Router();
 
@@ -26,6 +32,25 @@ function makeSlug(value) {
 
   return base || `tenant-${Date.now()}`;
 }
+
+router.get("/saas-modules", async (req, res, next) => {
+  try {
+    const modules = await listActiveSaasModules();
+    return res.json({
+      ok: true,
+      requiredModuleCodes: REQUIRED_MODULE_CODES,
+      modules: modules.map((item) => ({
+        code: item.code,
+        name: item.name,
+        description: item.description,
+        monthlyPrice: Number(item.monthlyPrice || 0),
+        active: Boolean(item.active)
+      }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.post("/signup", async (req, res, next) => {
   console.log("[PUBLIC SIGNUP] inicio", req.body?.email, req.body?.associationName);
@@ -59,8 +84,11 @@ router.post("/signup", async (req, res, next) => {
       });
     }
 
+    const trialDays = 7;
+    const requestedModules = normalizeModuleCodes(req.body.enabledModules || []);
+    const previewPricing = await calculateTenantSubscription({ enabledModules: requestedModules });
     const trialEndsAt = new Date();
-    trialEndsAt.setDate(trialEndsAt.getDate() + 30);
+    trialEndsAt.setDate(trialEndsAt.getDate() + trialDays);
 
     const baseSlug = makeSlug(associationName);
     const slug = `${baseSlug}-${Date.now()}`;
@@ -73,9 +101,7 @@ router.post("/signup", async (req, res, next) => {
       email,
       paymentGateway: "manual",
       status: "active",
-      trialEndsAt,
-      plan: "professional",
-      subscriptionStatus: "trialing"
+      enabledModules: previewPricing.enabledModules
     });
 
     console.log("[PUBLIC SIGNUP] tenant criado", String(tenant._id));
@@ -113,7 +139,11 @@ router.post("/signup", async (req, res, next) => {
         tenantId: tenant._id,
         plan: "professional",
         status: "trialing",
-        amount: 49.90,
+        amount: previewPricing.totalAmount,
+        baseAmount: previewPricing.baseAmount,
+        additionalAmount: previewPricing.additionalAmount,
+        enabledModules: previewPricing.enabledModules,
+        trialDays,
         trialEndsAt,
         nextBillingDate: trialEndsAt
       })
@@ -141,7 +171,9 @@ router.post("/signup", async (req, res, next) => {
         status: tenant.status,
         plan: "professional",
         subscriptionStatus: "trialing",
-        trialEndsAt
+        trialEndsAt,
+        trialDays,
+        enabledModules: previewPricing.enabledModules
       }
     });
   } catch (error) {
