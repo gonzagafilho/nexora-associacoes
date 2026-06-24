@@ -3,9 +3,13 @@ const { afterEach, test } = require("node:test");
 const jwt = require("jsonwebtoken");
 
 const FinancialTransaction = require("../src/models/FinancialTransaction");
+const Tenant = require("../src/models/Tenant");
+const TenantBranding = require("../src/models/TenantBranding");
+const monthlyReportPdfService = require("../src/services/financial/monthlyFinancialReportPdfService");
 const { createIncomeForPaidInvoice } = require("../src/services/financial/financialTransactionService");
 
 const tenantId = "507f1f77bcf86cd799439011";
+const otherTenantId = "507f1f77bcf86cd799439012";
 const userId = "507f191e810c19729de860ea";
 const transactionId = "507f1f77bcf86cd799439041";
 const invoiceId = "507f1f77bcf86cd799439031";
@@ -15,7 +19,10 @@ const originals = {
   create: FinancialTransaction.create,
   find: FinancialTransaction.find,
   findOne: FinancialTransaction.findOne,
-  countDocuments: FinancialTransaction.countDocuments
+  countDocuments: FinancialTransaction.countDocuments,
+  tenantFindById: Tenant.findById,
+  brandingFindOne: TenantBranding.findOne,
+  generateMonthlyFinancialReportPdf: monthlyReportPdfService.generateMonthlyFinancialReportPdf
 };
 
 afterEach(() => {
@@ -24,7 +31,11 @@ afterEach(() => {
   FinancialTransaction.find = originals.find;
   FinancialTransaction.findOne = originals.findOne;
   FinancialTransaction.countDocuments = originals.countDocuments;
+  Tenant.findById = originals.tenantFindById;
+  TenantBranding.findOne = originals.brandingFindOne;
+  monthlyReportPdfService.generateMonthlyFinancialReportPdf = originals.generateMonthlyFinancialReportPdf;
   delete require.cache[require.resolve("../src/modules/financial/financial.routes")];
+  delete require.cache[require.resolve("../src/services/financial/monthlyFinancialReportService")];
   delete require.cache[require.resolve("../src/app")];
 });
 
@@ -292,4 +303,123 @@ test("createIncomeForPaidInvoice não duplica income para invoice paga", async (
   });
 
   assert.deepEqual(result, existing);
+});
+
+function mockTenant(currentTenantId = tenantId) {
+  Tenant.findById = (id) => {
+    assert.equal(String(id), currentTenantId);
+    return lean({ _id: currentTenantId, name: "Associação Central", slug: "central", legalDocument: "12.345.678/0001-90" });
+  };
+}
+
+function monthlyRows() {
+  return [
+    { _id: "tx-before-income", tenantId, type: "income", category: "Mensalidades", description: "Mensalidade maio", amount: 300, status: "paid", paidAt: new Date("2026-05-15T12:00:00.000Z"), dueDate: new Date("2026-05-10T12:00:00.000Z"), createdAt: new Date("2026-05-10T12:00:00.000Z") },
+    { _id: "tx-before-expense", tenantId, type: "expense", category: "Energia", description: "Energia maio", amount: 80, status: "paid", paidAt: new Date("2026-05-20T12:00:00.000Z"), dueDate: new Date("2026-05-20T12:00:00.000Z"), createdAt: new Date("2026-05-20T12:00:00.000Z") },
+    { _id: "tx-income-1", tenantId, type: "income", category: "Mensalidades", description: "Mensalidade junho", amount: 100, status: "paid", paidAt: new Date("2026-06-05T12:00:00.000Z"), dueDate: new Date("2026-06-05T12:00:00.000Z"), createdAt: new Date("2026-06-05T12:00:00.000Z") },
+    { _id: "tx-income-2", tenantId, type: "income", category: "Eventos", description: "Evento junho", amount: 60, status: "paid", paidAt: new Date("2026-06-08T12:00:00.000Z"), dueDate: new Date("2026-06-08T12:00:00.000Z"), createdAt: new Date("2026-06-08T12:00:00.000Z") },
+    { _id: "tx-income-3", tenantId, type: "income", category: "Mensalidades", description: "Mensalidade extra", amount: 40, status: "paid", paidAt: new Date("2026-06-09T12:00:00.000Z"), dueDate: new Date("2026-06-09T12:00:00.000Z"), createdAt: new Date("2026-06-09T12:00:00.000Z") },
+    { _id: "tx-expense-1", tenantId, type: "expense", category: "Energia", description: "Energia junho", amount: 50, status: "paid", paidAt: new Date("2026-06-11T12:00:00.000Z"), dueDate: new Date("2026-06-11T12:00:00.000Z"), createdAt: new Date("2026-06-11T12:00:00.000Z") },
+    { _id: "tx-expense-2", tenantId, type: "expense", category: "Fornecedor", description: "Fornecedor junho", amount: 30, status: "paid", paidAt: new Date("2026-06-12T12:00:00.000Z"), dueDate: new Date("2026-06-12T12:00:00.000Z"), createdAt: new Date("2026-06-12T12:00:00.000Z") },
+    { _id: "tx-pending-income", tenantId, type: "income", category: "Mensalidades", description: "Pendente junho", amount: 25, status: "pending", dueDate: new Date("2026-06-20T12:00:00.000Z"), createdAt: new Date("2026-06-20T12:00:00.000Z") },
+    { _id: "tx-pending-expense", tenantId, type: "expense", category: "Fornecedor", description: "Pendente despesa", amount: 15, status: "pending", dueDate: new Date("2026-06-21T12:00:00.000Z"), createdAt: new Date("2026-06-21T12:00:00.000Z") },
+    { _id: "tx-outside", tenantId, type: "income", category: "Eventos", description: "Julho", amount: 999, status: "paid", paidAt: new Date("2026-07-01T12:00:00.000Z"), dueDate: new Date("2026-07-01T12:00:00.000Z"), createdAt: new Date("2026-07-01T12:00:00.000Z") }
+  ];
+}
+
+function mockMonthlyRows(rows = monthlyRows(), currentTenantId = tenantId) {
+  mockTenant(currentTenantId);
+  TenantBranding.findOne = (filter) => {
+    assert.equal(String(filter.tenantId), currentTenantId);
+    return lean({ primaryColor: "#0ea5e9", documentFooter: "Documento gerado automaticamente pelo Nexora Gestão." });
+  };
+  FinancialTransaction.find = (filter) => {
+    assert.equal(String(filter.tenantId), currentTenantId);
+    return lean(rows);
+  };
+}
+
+test("GET /api/financial/reports/monthly calcula openingBalance e closingBalance", async () => {
+  mockMonthlyRows();
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/financial/reports/monthly?month=2026-06", { headers: { Authorization: "Bearer " + authToken() } });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.totals.openingBalance, 220);
+    assert.equal(body.totals.incomePaid, 200);
+    assert.equal(body.totals.expensePaid, 80);
+    assert.equal(body.totals.balanceMonth, 120);
+    assert.equal(body.totals.closingBalance, 340);
+    assert.equal(body.totals.incomePending, 25);
+    assert.equal(body.totals.expensePending, 15);
+    assert.equal(body.transactions.length, 5);
+  });
+});
+
+test("GET /api/financial/reports/monthly separa receitas por categoria", async () => {
+  mockMonthlyRows();
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/financial/reports/monthly?month=2026-06", { headers: { Authorization: "Bearer " + authToken() } });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.byCategory.incomes, [
+      { category: "Mensalidades", amount: 140, count: 2 },
+      { category: "Eventos", amount: 60, count: 1 }
+    ]);
+  });
+});
+
+test("GET /api/financial/reports/monthly separa despesas por categoria", async () => {
+  mockMonthlyRows();
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/financial/reports/monthly?month=2026-06", { headers: { Authorization: "Bearer " + authToken() } });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.byCategory.expenses, [
+      { category: "Energia", amount: 50, count: 1 },
+      { category: "Fornecedor", amount: 30, count: 1 }
+    ]);
+  });
+});
+
+test("GET /api/financial/reports/monthly filtra somente tenant logado", async () => {
+  mockMonthlyRows([], otherTenantId);
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/financial/reports/monthly?month=2026-06", { headers: { Authorization: "Bearer " + authToken(otherTenantId) } });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(String(body.tenant.id), otherTenantId);
+    assert.equal(body.transactions.length, 0);
+    assert.equal(body.totals.closingBalance, 0);
+  });
+});
+
+test("GET /api/financial/reports/monthly/pdf retorna ok e filename", async () => {
+  mockMonthlyRows();
+  monthlyReportPdfService.generateMonthlyFinancialReportPdf = async (report) => {
+    assert.equal(report.period.month, "2026-06");
+    assert.equal(report.tenant.name, "Associação Central");
+    return { filename: "prestacao-contas-central-2026-06.pdf", filepath: "/tmp/prestacao-contas-central-2026-06.pdf", relativePath: "/storage/reports/prestacao-contas-central-2026-06.pdf" };
+  };
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/financial/reports/monthly/pdf?month=2026-06", { headers: { Authorization: "Bearer " + authToken() } });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.filename, "prestacao-contas-central-2026-06.pdf");
+    assert.equal(body.month, "2026-06");
+    assert.equal(body.reportUrl, "/api/financial/reports/monthly/pdf/download?month=2026-06");
+  });
+});
+
+test("GET /api/financial/reports/monthly com mês inválido retorna erro", async () => {
+  FinancialTransaction.find = async () => {
+    throw new Error("não deve consultar transações com mês inválido");
+  };
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/financial/reports/monthly?month=2026-13", { headers: { Authorization: "Bearer " + authToken() } });
+    const body = await response.json();
+    assert.equal(response.status, 400);
+    assert.equal(body.ok, false);
+  });
 });

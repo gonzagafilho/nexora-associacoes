@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
+const { getActiveLogoUrl } = require("./branding/tenantBrandingService");
 
 const PAGE = { width: 595.28, height: 841.89, margin: 36 };
 const COLORS = {
@@ -258,7 +259,7 @@ async function generateInvoicePdf({
   const filename = `invoice-${invoice._id}.pdf`;
   const filepath = path.join(pdfDir, filename);
   const [logo, qrCode] = await Promise.all([
-    loadImage(branding.logoUrl).catch((error) => {
+    loadImage(getActiveLogoUrl(branding)).catch((error) => {
       console.warn("[PDF] logo não carregada", error.message);
       return null;
     }),

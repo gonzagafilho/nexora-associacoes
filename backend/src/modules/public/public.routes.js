@@ -98,7 +98,7 @@ router.post("/signup", async (req, res, next) => {
         logoUrl: "",
         primaryColor: "#0ea5e9",
         secondaryColor: "#0284c7",
-        documentFooter: "Documento gerado automaticamente pela NEXORA."
+        documentFooter: "Documento gerado automaticamente pelo Nexora Gestão."
       }),
       TenantBillingSettings.create({
         tenantId: tenant._id

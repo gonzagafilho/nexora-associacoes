@@ -1,3 +1,4 @@
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -12,6 +13,7 @@ const invoicePdfRoutes = require("./modules/invoices/invoice-pdf.routes");
 const pixRoutes = require("./modules/pix/pix.routes");
 const publicRoutes = require("./modules/public/public.routes");
 const subscriptionRoutes = require("./modules/subscription/subscription.routes");
+const tenantRoutes = require("./modules/tenant/tenant.routes");
 const financialRoutes = require("./modules/financial/financial.routes");
 
 const app = express();
@@ -20,6 +22,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(morgan("dev"))
+app.use("/storage/branding", express.static(path.resolve(process.cwd(), "../storage/branding")));
 
 app.get("/health", (req, res) => {
   res.json({
@@ -38,6 +41,7 @@ app.use("/api/invoices", invoicesRoutes);
 app.use("/api/invoices", invoicePdfRoutes);
 app.use("/api/pix", pixRoutes);
 app.use("/api/subscription", subscriptionRoutes);
+app.use("/api/tenant", tenantRoutes);
 app.use("/api/financial", financialRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",

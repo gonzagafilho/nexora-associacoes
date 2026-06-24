@@ -1,4 +1,6 @@
 const express = require("express");
+const { buildMonthlyFinancialReport } = require("../../services/financial/monthlyFinancialReportService");
+const { generateMonthlyFinancialReportPdf } = require("../../services/financial/monthlyFinancialReportPdfService");
 const auth = require("../../middlewares/auth");
 const FinancialTransaction = require("../../models/FinancialTransaction");
 
@@ -143,6 +145,42 @@ function serialize(transaction) {
     updatedAt: transaction.updatedAt || null
   };
 }
+
+
+router.get("/reports/monthly", auth, async (req, res) => {
+  try {
+    const report = await buildMonthlyFinancialReport({ tenantId: req.user.tenantId, month: req.query.month });
+    return res.json(report);
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao gerar prestação de contas." });
+  }
+});
+
+router.get("/reports/monthly/pdf", auth, async (req, res) => {
+  try {
+    const report = await buildMonthlyFinancialReport({ tenantId: req.user.tenantId, month: req.query.month });
+    const pdf = await generateMonthlyFinancialReportPdf(report);
+    const encodedMonth = encodeURIComponent(report.period.month);
+    return res.json({
+      ok: true,
+      reportUrl: "/api/financial/reports/monthly/pdf/download?month=" + encodedMonth,
+      filename: pdf.filename,
+      month: report.period.month
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao gerar PDF da prestação de contas." });
+  }
+});
+
+router.get("/reports/monthly/pdf/download", auth, async (req, res) => {
+  try {
+    const report = await buildMonthlyFinancialReport({ tenantId: req.user.tenantId, month: req.query.month });
+    const pdf = await generateMonthlyFinancialReportPdf(report);
+    return res.download(pdf.filepath, pdf.filename);
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao baixar PDF da prestação de contas." });
+  }
+});
 
 router.get("/summary", auth, async (req, res) => {
   try {

@@ -8,6 +8,7 @@ const TenantBranding = require("../../models/TenantBranding");
 const TenantBillingSettings = require("../../models/TenantBillingSettings");
 const TenantMercadoPagoSettings = require("../../models/TenantMercadoPagoSettings");
 const TenantSubscription = require("../../models/TenantSubscription");
+const { toSafeBranding } = require("../../services/branding/tenantBrandingService");
 const {
   applySecretUpdate,
   findSettingsWithSecrets,
@@ -28,6 +29,12 @@ function requireSettingsAdmin(req, res, next) {
   return next();
 }
 
+function parseBooleanFlag(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return ["true", "1", "on", "yes"].includes(value.trim().toLowerCase());
+  return Boolean(value);
+}
+
 function getWebhookUrl(req) {
   const protocol = String(req.headers["x-forwarded-proto"] || req.protocol || "https")
     .split(",")[0]
@@ -45,7 +52,7 @@ router.get("/", auth, async (req, res) => {
     TenantSubscription.findOne({ tenantId: req.user.tenantId }).lean()
   ]);
 
-  return res.json({ ok: true, user, tenant, branding, billingSettings, subscription });
+  return res.json({ ok: true, user, tenant, branding: toSafeBranding(branding), billingSettings, subscription });
 });
 
 router.put("/billing-settings/boleto", auth, requireSettingsAdmin, async (req, res) => {
@@ -83,7 +90,7 @@ router.put("/billing-settings/boleto", auth, requireSettingsAdmin, async (req, r
 
 router.put("/settings", auth, requireSettingsAdmin, async (req, res) => {
   const tenantFields = ["name", "legalDocument", "phone", "email", "address"];
-  const brandingFields = ["logoUrl", "primaryColor", "secondaryColor", "documentFooter"];
+  const brandingFields = ["logoUrl", "primaryColor", "secondaryColor", "documentFooter", "logoUseProcessed"];
   const billingFields = [
     "defaultMonthlyAmount",
     "defaultDueDay",
@@ -103,7 +110,11 @@ router.put("/settings", auth, requireSettingsAdmin, async (req, res) => {
     if (req.body.tenant?.[field] !== undefined) tenantUpdate[field] = req.body.tenant[field];
   }
   for (const field of brandingFields) {
-    if (req.body.branding?.[field] !== undefined) brandingUpdate[field] = req.body.branding[field];
+    if (req.body.branding?.[field] !== undefined) {
+      brandingUpdate[field] = field === "logoUseProcessed"
+        ? parseBooleanFlag(req.body.branding[field])
+        : req.body.branding[field];
+    }
   }
   for (const field of billingFields) {
     if (req.body.billingSettings?.[field] !== undefined) {
@@ -149,7 +160,7 @@ router.put("/settings", auth, requireSettingsAdmin, async (req, res) => {
     ]
   });
 
-  return res.json({ ok: true, tenant, branding, billingSettings });
+  return res.json({ ok: true, tenant, branding: toSafeBranding(branding), billingSettings });
 });
 
 router.get("/mercadopago-settings", auth, requireSettingsAdmin, async (req, res) => {
