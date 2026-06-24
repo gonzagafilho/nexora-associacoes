@@ -16,7 +16,8 @@ function auth(req, res, next) {
       id: payload.sub,
       tenantId: payload.tenantId,
       role: payload.role,
-      email: payload.email
+      email: payload.email,
+      enabledModules: Array.isArray(payload.enabledModules) ? payload.enabledModules : undefined
     };
 
     return next();

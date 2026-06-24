@@ -16,6 +16,7 @@ const subscriptionRoutes = require("./modules/subscription/subscription.routes")
 const tenantRoutes = require("./modules/tenant/tenant.routes");
 const financialRoutes = require("./modules/financial/financial.routes");
 const projectRoutes = require("./modules/projects/projects.routes");
+const assetRoutes = require("./modules/assets/assets.routes");
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use("/api/subscription", subscriptionRoutes);
 app.use("/api/tenant", tenantRoutes);
 app.use("/api/financial", financialRoutes);
 app.use("/api/projects", projectRoutes);
+app.use("/api/assets", assetRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",
   pixRoutes.mercadoPagoWebhook
