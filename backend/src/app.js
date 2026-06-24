@@ -12,6 +12,7 @@ const invoicePdfRoutes = require("./modules/invoices/invoice-pdf.routes");
 const pixRoutes = require("./modules/pix/pix.routes");
 const publicRoutes = require("./modules/public/public.routes");
 const subscriptionRoutes = require("./modules/subscription/subscription.routes");
+const financialRoutes = require("./modules/financial/financial.routes");
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use("/api/invoices", invoicesRoutes);
 app.use("/api/invoices", invoicePdfRoutes);
 app.use("/api/pix", pixRoutes);
 app.use("/api/subscription", subscriptionRoutes);
+app.use("/api/financial", financialRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",
   pixRoutes.mercadoPagoWebhook

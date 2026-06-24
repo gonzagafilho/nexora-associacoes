@@ -11,8 +11,10 @@ const state = {
   saasFilters: { q: "", status: "", page: 1, limit: 10 },
   saasPaymentFilters: { q: "", status: "", page: 1, limit: 10 },
   saasAuditFilters: { q: "", scope: "", action: "", status: "", dateFrom: "", dateTo: "", page: 1, limit: 10 },
+  financialFilters: { q: "", type: "", status: "", category: "", dateFrom: "", dateTo: "", page: 1, limit: 10 },
   saasPayments: [],
-  saasAudit: []
+  saasAudit: [],
+  financialTransactions: []
 };
 
 const icons = {
@@ -89,7 +91,7 @@ function renderLogin() {
 
 const navItems = [
   ["dashboard", "Dashboard", "dashboard"], ["associados", "Associados", "users"], ["mensalidades", "Mensalidades", "calendar"],
-  ["cobrancas", "Cobranças", "receipt"], ["mercadopago", "Mercado Pago", "card"], ["saas", "SaaS", "saas"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
+  ["cobrancas", "Cobranças", "receipt"], ["financeiro", "Financeiro", "card"], ["mercadopago", "Mercado Pago", "card"], ["saas", "SaaS", "saas"], ["assinatura", "Assinatura", "star"], ["configuracoes", "Configurações", "settings"]
 ];
 function shellHtml() {
   return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand"><img src="/nexora-logo.png" style="height:40px;width:auto" alt="NEXORA"></div><nav class="nav">${navItems.map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot">NEXORA • Gestão Inteligente</div></aside><section class="main"><header class="topbar"><div style="display:flex;align-items:center;gap:12px"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="tenant-name">${escapeHtml(state.tenant?.name || state.me?.tenant?.name || "Associação")}</div></div><div class="user-menu"><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main></section></div>`;
@@ -110,7 +112,7 @@ function pageHead(title, subtitle, actions = "") { return `<header class="page-h
 async function renderRoute() {
   loading();
   try {
-    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
+    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
     await (routes[state.route] || renderDashboard)();
   } catch (error) { content().innerHTML = `<div class="card empty">Não foi possível carregar esta tela.<br><small>${escapeHtml(error.message)}</small></div>`; toast(error.message, true); }
 }
@@ -153,6 +155,111 @@ function viewInvoice(invoice) { openModal("Detalhes da cobrança", `<div class="
 async function generatePix(id) { try { const result = await api(`/api/pix/invoices/${id}/mercadopago`, { method: "POST" }); const pix = result.invoicePix || result.transaction || result; const code = pix.pixCopyPaste || pix.qrCode || result.transaction?.qrCode || ""; openModal("PIX gerado", `<p>PIX criado com sucesso.</p><div class="pix-code">${escapeHtml(code)}</div><div class="actions" style="margin-top:14px"><button class="button button-primary" data-copy-pix>Copiar PIX</button></div>`, null, "Fechar"); document.querySelector("[data-copy-pix]")?.addEventListener("click", async () => { await navigator.clipboard.writeText(code); toast("PIX copiado."); }); } catch (error) { toast(error.message, true); } }
 async function generateBoleto(id) { try { const result = await api(`/api/invoices/${id}/boleto/mercadopago`, { method: "POST" }); const boleto = result.boleto || result.transaction; openModal("Boleto gerado", `<div class="detail-grid"><div class="detail-item"><small>Valor original</small>${money(boleto.originalAmount)}</div><div class="detail-item"><small>Taxa</small>${money(boleto.feeAmount)}</div><div class="detail-item"><small>Total</small>${money(boleto.totalAmount)}</div></div><div class="actions" style="margin-top:18px">${boleto.boletoUrl ? `<a class="button button-primary" target="_blank" href="${escapeHtml(boleto.boletoUrl)}">Abrir boleto</a>` : ""}</div>`, null, "Fechar"); } catch (error) { toast(error.message, true); } }
 async function downloadPdf(id) { try { await api(`/api/invoices/${id}/pdf`, { method: "POST" }); const response = await fetch(`/api/invoices/${id}/pdf`, { headers: { Authorization: `Bearer ${state.token}` } }); if (!response.ok) throw new Error("Não foi possível baixar o PDF."); const blob = await response.blob(); const url = URL.createObjectURL(blob); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 60000); } catch (error) { toast(error.message, true); } }
+
+
+function financialQuery() {
+  const params = new URLSearchParams({ page: state.financialFilters.page, limit: state.financialFilters.limit });
+  ["q", "type", "status", "category", "dateFrom", "dateTo"].forEach((key) => {
+    if (state.financialFilters[key]) params.set(key, state.financialFilters[key]);
+  });
+  return params.toString();
+}
+function financialTypeLabel(type) { return type === "income" ? "Entrada" : type === "expense" ? "Saída" : "—"; }
+function paymentMethodLabel(method) { const labels = { pix: "PIX", cash: "Dinheiro", bank_transfer: "Transferência", card: "Cartão", boleto: "Boleto", other: "Outro" }; return labels[method] || method || "—"; }
+function inputDateValue(value) { return value ? new Date(value).toISOString().slice(0, 10) : ""; }
+function financialPagination(list) {
+  if (!list.totalPages || list.totalPages <= 1) return "";
+  return '<div class="saas-pagination"><button class="button button-secondary button-sm" data-financial-page="' + (list.page - 1) + '"' + (list.page <= 1 ? ' disabled' : '') + '>Anterior</button><span>Página ' + list.page + ' de ' + list.totalPages + '</span><button class="button button-secondary button-sm" data-financial-page="' + (list.page + 1) + '"' + (list.page >= list.totalPages ? ' disabled' : '') + '>Próxima</button></div>';
+}
+function renderFinancialRows(items) {
+  state.financialTransactions = items || [];
+  if (!state.financialTransactions.length) return '<div class="card empty">Nenhuma transação financeira encontrada.</div>';
+  return '<div class="table-wrap"><table class="table financial-table"><thead><tr><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Pago em</th><th>Status</th><th>Forma de pagamento</th><th>Ações</th></tr></thead><tbody>' +
+    state.financialTransactions.map((item, index) => '<tr><td><div class="cell-title">' + financialTypeLabel(item.type) + '</div></td><td>' + escapeHtml(item.category || "—") + '</td><td><div class="cell-title">' + escapeHtml(item.description || "—") + '</div><div class="cell-sub">' + escapeHtml(item.supplierName || item.notes || "") + '</div></td><td>' + money(item.amount) + '</td><td>' + date(item.dueDate) + '</td><td>' + date(item.paidAt) + '</td><td>' + badge(item.status) + '</td><td>' + escapeHtml(paymentMethodLabel(item.paymentMethod)) + '</td><td><div class="row-actions">' + (item.status !== "paid" && item.status !== "cancelled" ? '<button class="button button-secondary button-sm" type="button" data-pay-financial="' + index + '">Marcar como pago</button><button class="button button-ghost button-sm" type="button" data-cancel-financial="' + index + '">Cancelar</button>' : '<span class="cell-sub">—</span>') + '</div></td></tr>').join("") +
+    '</tbody></table></div>';
+}
+async function renderFinancial() {
+  const [summaryResponse, list] = await Promise.all([
+    api("/api/financial/summary"),
+    api("/api/financial/transactions?" + financialQuery())
+  ]);
+  const s = summaryResponse.summary || {};
+  const overdueTotal = Number(s.overdueExpenses || 0) + Number(s.overdueIncomes || 0);
+  content().innerHTML = pageHead("Financeiro", "Entradas, saídas e saldo da associação.", '<button class="button button-primary" type="button" data-new-income>Nova entrada</button><button class="button button-secondary" type="button" data-new-expense>Nova saída</button>') +
+    '<section class="metrics">' +
+      metric("Recebido no mês", money(s.incomePaidMonth), "Entradas pagas", true) +
+      metric("Pago no mês", money(s.expensePaidMonth), "Saídas pagas") +
+      metric("Saldo do mês", money(s.balanceMonth), "Recebido - pago", true) +
+      metric("Saldo em caixa", money(s.cashBalance), "Total pago acumulado") +
+      metric("Entradas pendentes", money(s.incomePending)) +
+      metric("Saídas pendentes", money(s.expensePending), "", true) +
+      metric("Vencidas", money(overdueTotal), "Entradas e saídas") +
+    '</section><section class="card" style="margin-top:16px"><form class="toolbar" data-financial-filters><input class="input" name="q" placeholder="Buscar descrição, categoria, fornecedor" value="' + escapeHtml(state.financialFilters.q) + '"><select class="select" name="type" style="max-width:160px"><option value=""' + (!state.financialFilters.type ? ' selected' : '') + '>Todos os tipos</option><option value="income"' + (state.financialFilters.type === 'income' ? ' selected' : '') + '>Entradas</option><option value="expense"' + (state.financialFilters.type === 'expense' ? ' selected' : '') + '>Saídas</option></select><select class="select" name="status" style="max-width:180px"><option value=""' + (!state.financialFilters.status ? ' selected' : '') + '>Todos os status</option><option value="pending"' + (state.financialFilters.status === 'pending' ? ' selected' : '') + '>Pendentes</option><option value="paid"' + (state.financialFilters.status === 'paid' ? ' selected' : '') + '>Pagas</option><option value="cancelled"' + (state.financialFilters.status === 'cancelled' ? ' selected' : '') + '>Canceladas</option><option value="overdue"' + (state.financialFilters.status === 'overdue' ? ' selected' : '') + '>Vencidas</option></select><input class="input" name="category" placeholder="Categoria" value="' + escapeHtml(state.financialFilters.category) + '"><input class="input" type="date" name="dateFrom" value="' + escapeHtml(state.financialFilters.dateFrom) + '"><input class="input" type="date" name="dateTo" value="' + escapeHtml(state.financialFilters.dateTo) + '"><button class="button button-primary" type="submit">Filtrar</button></form>' + renderFinancialRows(list.items || []) + financialPagination(list) + '</section>';
+  bindFinancial();
+}
+function bindFinancial() {
+  content().querySelector("[data-new-income]")?.addEventListener("click", () => openFinancialModal("income"));
+  content().querySelector("[data-new-expense]")?.addEventListener("click", () => openFinancialModal("expense"));
+  content().querySelector("[data-financial-filters]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    ["q", "type", "status", "category", "dateFrom", "dateTo"].forEach((key) => { state.financialFilters[key] = String(data.get(key) || "").trim(); });
+    state.financialFilters.page = 1;
+    await renderFinancial();
+  });
+  content().querySelectorAll("[data-financial-page]").forEach((button) => button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    state.financialFilters.page = Number(button.dataset.financialPage || 1);
+    await renderFinancial();
+  }));
+  content().querySelectorAll("[data-pay-financial]").forEach((button) => button.addEventListener("click", async () => {
+    const item = state.financialTransactions[Number(button.dataset.payFinancial)];
+    if (!item) return;
+    await api("/api/financial/transactions/" + item.id + "/pay", { method: "POST", body: JSON.stringify({ paymentMethod: item.paymentMethod || "other" }) });
+    toast("Transação marcada como paga.");
+    await renderFinancial();
+  }));
+  content().querySelectorAll("[data-cancel-financial]").forEach((button) => button.addEventListener("click", async () => {
+    const item = state.financialTransactions[Number(button.dataset.cancelFinancial)];
+    if (!item || !confirm("Deseja cancelar esta transação?")) return;
+    await api("/api/financial/transactions/" + item.id + "/cancel", { method: "POST" });
+    toast("Transação cancelada.");
+    await renderFinancial();
+  }));
+}
+function openFinancialModal(type = "income", transaction = {}) {
+  const isExpense = type === "expense";
+  openModal(isExpense ? "Nova saída" : "Nova entrada", '<form data-financial-form><div class="form-grid">' +
+    '<input type="hidden" name="type" value="' + escapeHtml(type) + '">' +
+    field("category", "Categoria", transaction.category || (isExpense ? "Fornecedores" : "Mensalidades"), "text", true) +
+    field("amount", "Valor", transaction.amount || "", "number", true, 'step="0.01" min="0.01"') +
+    field("description", "Descrição", transaction.description || "", "text", true) +
+    field("dueDate", "Vencimento", inputDateValue(transaction.dueDate) || new Date().toISOString().slice(0, 10), "date", true) +
+    selectField("paymentMethod", "Forma de pagamento", [["pix", "PIX"], ["cash", "Dinheiro"], ["bank_transfer", "Transferência"], ["card", "Cartão"], ["boleto", "Boleto"], ["other", "Outro"]], transaction.paymentMethod || "other") +
+    field("supplierName", "Fornecedor", transaction.supplierName || "", "text", false) +
+    '<label class="field span-2"><span>Observação</span><textarea class="textarea" name="notes">' + escapeHtml(transaction.notes || "") + '</textarea></label>' +
+    '</div></form>', async () => {
+      const form = document.querySelector("[data-financial-form]");
+      if (!form.reportValidity()) return false;
+      const fd = new FormData(form);
+      await api("/api/financial/transactions", {
+        method: "POST",
+        body: JSON.stringify({
+          type: fd.get("type"),
+          category: fd.get("category"),
+          description: fd.get("description"),
+          amount: Number(fd.get("amount") || 0),
+          dueDate: fd.get("dueDate"),
+          paymentMethod: fd.get("paymentMethod"),
+          supplierName: fd.get("supplierName"),
+          notes: fd.get("notes"),
+          referenceType: isExpense ? "supplier" : "manual"
+        })
+      });
+      toast(isExpense ? "Saída criada." : "Entrada criada.");
+      await renderFinancial();
+    }, "Cancelar", isExpense ? "Criar saída" : "Criar entrada");
+}
 
 async function renderCharges() { const response = await api("/api/pix/transactions"); const transactions = response.transactions || []; content().innerHTML = `${pageHead("Cobranças", "Histórico financeiro de PIX e boletos.")}<div class="toolbar"><select class="select" data-charge-method style="max-width:180px"><option value="">Todos os meios</option><option value="pix">PIX</option><option value="boleto">Boleto</option></select><select class="select" data-charge-status style="max-width:180px"><option value="">Todos</option><option value="paid">Pago</option><option value="approved">Aprovado</option><option value="pending">Pendente</option><option value="cancelled">Cancelado</option></select></div><div data-charge-table></div>`; const draw = () => { const method = content().querySelector("[data-charge-method]").value; const status = content().querySelector("[data-charge-status]").value; const rows = transactions.filter((t) => (!method || t.method === method) && (!status || t.status === status)); content().querySelector("[data-charge-table]").innerHTML = tableCharges(rows); }; content().querySelectorAll("select").forEach((el) => el.addEventListener("change", draw)); draw(); }
 function tableCharges(rows) { if (!rows.length) return '<div class="card empty">Nenhuma cobrança encontrada.</div>'; return `<div class="table-wrap"><table class="table"><thead><tr><th>Meio</th><th>Associado</th><th>Cobrança</th><th>Valor</th><th>Status</th><th>Pagamento</th></tr></thead><tbody>${rows.map((t) => `<tr><td><div class="cell-title">${String(t.method || "pix").toUpperCase()}</div><div class="cell-sub">${escapeHtml(t.externalId)}</div></td><td>${escapeHtml(t.associateId?.name || "—")}</td><td>${escapeHtml(t.invoiceId?.description || "—")}</td><td>${money(t.totalAmount || t.amount)}</td><td>${badge(t.status)}</td><td>${date(t.paidAt || t.payment?.paidAt)}<div class="cell-sub">${t.payment ? money(t.payment.amountPaid) : ""}</div></td></tr>`).join("")}</tbody></table></div>`; }

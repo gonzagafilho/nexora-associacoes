@@ -5,6 +5,7 @@ const Invoice = require("../../models/Invoice");
 const Associate = require("../../models/Associate");
 const InvoicePix = require("../../models/InvoicePix");
 const Payment = require("../../models/Payment");
+const { createIncomeForPaidInvoice } = require("../financial/financialTransactionService");
 const {
   mercadoPagoRequest,
   resolveTenantCredentials
@@ -265,6 +266,7 @@ async function syncPaymentStatus(paymentId, webhookPayload = null) {
     }
 
     if (paidInvoice) {
+      await createIncomeForPaidInvoice(paidInvoice, { amount: paidAmount, paidAt, paymentMethod: method });
       console.log(`[MP WEBHOOK] invoice paga (${method})`, String(paidInvoice._id));
     } else {
       alreadyPaid = true;

@@ -5,3 +5,5 @@
 .saas-tabs{margin:0 0 16px;border-color:#1e3a5f}.saas-tabs .tab{font-size:13px}.saas-payments-table{min-width:1180px}.saas-pix-qr{display:grid;place-items:center;margin:18px 0}.saas-pix-qr img{width:min(260px,100%);height:auto;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff}
 
 .checkbox-field{flex-direction:row;align-items:center;padding:13px;border:1px solid var(--line);border-radius:10px;background:#0b1220}.checkbox-field input{width:auto}.checkbox-field span{font-size:13px}
+
+.financial-table{min-width:1120px}

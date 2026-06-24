@@ -17,6 +17,7 @@ const {
 const mercadoPagoPixService = require("../../services/pix/mercadoPagoPixService");
 const { generateInvoicePdf } = require("../../services/pdfService");
 const { createBillingAuditLog } = require("../../services/audit/billingAuditService");
+const { createIncomeForPaidInvoice } = require("../../services/financial/financialTransactionService");
 
 function auditAssociateBilling(req, data) {
   return createBillingAuditLog({
@@ -307,8 +308,11 @@ router.post("/:id/mark-paid", auth, async (req, res) => {
 
   invoice.status = "paid";
   invoice.paidAt = req.body.paidAt ? new Date(req.body.paidAt) : new Date();
+  invoice.paidAmount = Number(req.body.amountPaid || invoice.amountCurrent || invoice.amountOriginal || 0);
+  invoice.paymentMethod = "manual";
 
   await invoice.save();
+  await createIncomeForPaidInvoice(invoice, { amount: invoice.paidAmount, paidAt: invoice.paidAt, paymentMethod: "other" });
 
   return res.json({ ok: true, invoice });
 });
