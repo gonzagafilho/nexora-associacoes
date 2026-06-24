@@ -17,6 +17,7 @@ const state = {
   projectFilters: { q: "", status: "", type: "" },
   assetFilters: { q: "", status: "", category: "" },
   protocolFilters: { q: "", status: "", priority: "", type: "", dateFrom: "", dateTo: "", page: 1, limit: 20 },
+  notifications: { open: false, unread: 0, items: [], loading: false },
   saasPayments: [],
   saasAudit: [],
   financialTransactions: []
@@ -50,6 +51,7 @@ const icons = {
   card: "M3 5h18v14H3V5Zm0 5h18M7 15h3",
   settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0-13v2m0 15v2m9.5-9.5h-2m-15 0h-2m16.2-6.2-1.4 1.4M6.7 17.3l-1.4 1.4m13.4 0-1.4-1.4M6.7 6.7 5.3 5.3",
   projects: "M3 21h18M5 21V7l7-4 7 4v14M9 10h6M9 14h6",
+  bell: "M15 17h5l-1.4-1.4a2 2 0 0 1-.6-1.4V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0H9m6 0a3 3 0 0 1-6 0",
   logout: "M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4",
   menu: "M4 6h16M4 12h16M4 18h16",
   saas: "M4 7h16M4 12h16M4 17h10m4-10v10M8 7v10",
@@ -205,13 +207,15 @@ const navItems = [
 function visibleNavItems() { return navItems.filter(([, , , moduleCode]) => hasModuleAccess(moduleCode)); }
 function shellHtml() {
   const branding = resolveBranding(); applyBrandingTheme(branding);
-  return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand brand-shell">${brandLogoHtml(branding, 38, "brand-logo-shell")}<div><span>${escapeHtml(currentTenantName())}</span><small>Nexora Gestão</small></div></div><nav class="nav">${visibleNavItems().map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></div></aside><section class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="topbar-brand">${brandLogoHtml(branding, 30, "brand-logo-topbar")}<div><div class="tenant-name">${escapeHtml(currentTenantName())}</div><small>${escapeHtml(branding.organizationName)}</small></div></div></div><div class="user-menu"><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main><footer class="app-footer"><strong>${escapeHtml(currentTenantName())}</strong><span>NEXORA © 2026 • Plataforma de Gestão Inteligente</span></footer></section></div>`;
+  return `<div class="app-shell"><aside class="sidebar" data-sidebar><div class="brand brand-shell">${brandLogoHtml(branding, 38, "brand-logo-shell")}<div><span>${escapeHtml(currentTenantName())}</span><small>Nexora Gestão</small></div></div><nav class="nav">${visibleNavItems().map(([route, label, glyph]) => `<a class="nav-item ${state.route === route ? "active" : ""}" href="#${route}" data-route="${route}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav><div class="sidebar-foot"><strong>NEXORA © 2026</strong><span>Plataforma de Gestão Inteligente</span></div></aside><section class="main"><header class="topbar"><div class="topbar-left"><button class="mobile-toggle" data-menu>${icon("menu")}</button><div class="topbar-brand">${brandLogoHtml(branding, 30, "brand-logo-topbar")}<div><div class="tenant-name">${escapeHtml(currentTenantName())}</div><small>${escapeHtml(branding.organizationName)}</small></div></div></div><div class="user-menu"><button class="button button-ghost button-sm" data-open-notifications style="position:relative">${icon("bell")}<span style="margin-left:6px">Notificações</span>${state.notifications.unread > 0 ? `<span style="position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#ef4444;color:#fff;font-size:11px;display:grid;place-items:center;font-weight:800">${state.notifications.unread}</span>` : ''}</button><div class="user-meta"><strong>${escapeHtml(state.user?.name || "Usuário")}</strong><small>${escapeHtml(state.user?.role || "")}</small></div><div class="avatar">${escapeHtml((state.user?.name || "N")[0].toUpperCase())}</div><button class="button button-ghost button-sm" data-logout>${icon("logout")} Sair</button></div></header><main class="content" data-content></main><footer class="app-footer"><strong>${escapeHtml(currentTenantName())}</strong><span>NEXORA © 2026 • Plataforma de Gestão Inteligente</span></footer></section></div><div data-notifications-host></div>`;
 }
 async function renderShell() {
   if (!state.token) return renderLogin();
   app.innerHTML = shellHtml();
   app.querySelector("[data-logout]").addEventListener("click", logout);
   app.querySelector("[data-menu]").addEventListener("click", () => app.querySelector("[data-sidebar]").classList.toggle("open"));
+  renderNotificationsPanel();
+  await refreshNotifications();
   await renderRoute();
 }
 function setRoute(route) { state.route = route; document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.route === route)); const sidebar = app.querySelector("[data-sidebar]"); if (sidebar) sidebar.classList.remove("open"); }
@@ -250,6 +254,82 @@ async function renderDashboard() {
   </section><section class="grid-2"><div class="card"><h3>Recebimentos e cobranças — últimos 6 meses</h3><div class="chart">${data.months.map((month) => `<div class="bar-group"><div class="bars"><span class="bar secondary" style="height:${Math.max(3, month.charged / max * 180)}px" title="Cobrado ${money(month.charged)}"></span><span class="bar" style="height:${Math.max(3, month.received / max * 180)}px" title="Recebido ${money(month.received)}"></span></div><span class="bar-label">${month.label}</span></div>`).join("")}</div></div><div class="card"><h3>Inadimplência</h3><div class="donut" style="--value:${delinquency}%" data-label="${delinquency}%"></div><p style="text-align:center;color:var(--muted)">${data.overdueInvoices} mensalidade(s) vencida(s) • ${money(data.totalVencido)}</p></div></section>`;
 }
 function metric(label, value, note = "", accent = false) { return `<article class="metric${accent ? " accent" : ""}"><div class="metric-label">${label}</div><div class="metric-value">${value}</div>${note ? `<div class="metric-note">${note}</div>` : ""}</article>`; }
+
+function notificationModuleLabel(moduleCode = "") {
+  const labels = { saas: "SaaS", associates: "Associados", invoices: "Mensalidades", financial: "Financeiro", projects: "Projetos", assets: "Patrimônio", protocols: "Protocolos" };
+  return labels[moduleCode] || moduleCode || "Sistema";
+}
+function notificationSeverityChip(severity = "low") {
+  const palette = {
+    critical: { bg: "#7f1d1d", text: "#fecaca", label: "Crítica" },
+    high: { bg: "#7c2d12", text: "#fed7aa", label: "Alta" },
+    medium: { bg: "#713f12", text: "#fde68a", label: "Média" },
+    low: { bg: "#1e3a8a", text: "#bfdbfe", label: "Baixa" }
+  };
+  const style = palette[severity] || palette.low;
+  return `<span style="display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;background:${style.bg};color:${style.text};text-transform:uppercase">${style.label}</span>`;
+}
+function notificationCard(item = {}) {
+  return `<article style="padding:12px;border:1px solid var(--line);border-radius:12px;background:${item.isRead ? '#0b1220' : '#111827'}"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><div style="font-weight:800">${escapeHtml(item.title || 'Notificação')}</div><div style="color:var(--muted);font-size:12px;margin-top:4px">${escapeHtml(item.message || '')}</div></div>${notificationSeverityChip(item.severity)}</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px"><small style="color:var(--muted)">${dateTime(item.createdAt)} • ${escapeHtml(notificationModuleLabel(item.module))}</small><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-read-notification="${item.id}">${item.isRead ? 'Lida' : 'Marcar lida'}</button><button class="button button-danger button-sm" data-delete-notification="${item.id}">Excluir</button></div></div></article>`;
+}
+function notificationsPanelHtml() {
+  return `<aside data-notifications-panel style="position:fixed;top:0;right:0;height:100vh;width:min(430px,92vw);z-index:180;background:#0b1220;border-left:1px solid var(--line);box-shadow:-18px 0 60px #0009;transform:${state.notifications.open ? 'translateX(0)' : 'translateX(105%)'};transition:transform .25s ease;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center"><div><h3 style="margin:0">Notificações</h3><small style="color:var(--muted)">${state.notifications.unread} não lida(s)</small></div><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-all-notifications>Marcar todas</button><button class="button button-ghost button-sm" data-close-notifications>Fechar</button></div></header><section style="padding:14px;overflow:auto;display:grid;gap:10px" data-notifications-list>${state.notifications.loading ? '<div class="card empty">Carregando notificações...</div>' : (state.notifications.items.length ? state.notifications.items.map((item) => notificationCard(item)).join('') : '<div class="card empty">Sem notificações no momento.</div>')}</section></aside><div data-notifications-overlay style="position:fixed;inset:0;background:#020617aa;z-index:170;display:${state.notifications.open ? 'block' : 'none'}"></div>`;
+}
+async function refreshNotifications() {
+  state.notifications.loading = true;
+  if (app.querySelector('[data-notifications-list]')) {
+    app.querySelector('[data-notifications-list]').innerHTML = '<div class="card empty">Carregando notificações...</div>';
+  }
+  try {
+    const [count, list] = await Promise.all([api('/api/notifications/unread-count'), api('/api/notifications?limit=30')]);
+    state.notifications.unread = Number(count.unread || 0);
+    state.notifications.items = list.notifications || [];
+  } catch (_error) {
+    state.notifications.items = [];
+  } finally {
+    state.notifications.loading = false;
+    renderNotificationsPanel();
+  }
+}
+function renderNotificationsPanel() {
+  const host = app.querySelector('[data-notifications-host]');
+  if (!host) return;
+  host.innerHTML = notificationsPanelHtml();
+  bindNotificationsPanel();
+}
+function bindNotificationsPanel() {
+  app.querySelector('[data-close-notifications]')?.addEventListener('click', () => {
+    state.notifications.open = false;
+    renderNotificationsPanel();
+  });
+  app.querySelector('[data-notifications-overlay]')?.addEventListener('click', () => {
+    state.notifications.open = false;
+    renderNotificationsPanel();
+  });
+  app.querySelector('[data-open-notifications]')?.addEventListener('click', async () => {
+    state.notifications.open = !state.notifications.open;
+    renderNotificationsPanel();
+    if (state.notifications.open) await refreshNotifications();
+  });
+  app.querySelector('[data-mark-all-notifications]')?.addEventListener('click', async () => {
+    await api('/api/notifications/read-all', { method: 'POST' });
+    toast('Notificações marcadas como lidas.');
+    await refreshNotifications();
+  });
+  app.querySelectorAll('[data-mark-read-notification]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api(`/api/notifications/${button.dataset.markReadNotification}/read`, { method: 'POST' });
+      await refreshNotifications();
+    });
+  });
+  app.querySelectorAll('[data-delete-notification]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await api(`/api/notifications/${button.dataset.deleteNotification}`, { method: 'DELETE' });
+      toast('Notificação removida.');
+      await refreshNotifications();
+    });
+  });
+}
 
 async function renderAssociates() {
   const response = await api("/api/associates"); const associates = response.associates || [];
