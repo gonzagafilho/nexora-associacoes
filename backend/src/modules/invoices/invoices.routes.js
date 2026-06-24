@@ -16,6 +16,16 @@ const {
 } = require("../../services/boleto/mercadoPagoBoletoService");
 const mercadoPagoPixService = require("../../services/pix/mercadoPagoPixService");
 const { generateInvoicePdf } = require("../../services/pdfService");
+const { createBillingAuditLog } = require("../../services/audit/billingAuditService");
+
+function auditAssociateBilling(req, data) {
+  return createBillingAuditLog({
+    req,
+    scope: "associate",
+    action: "associate_invoice_manual",
+    ...data
+  });
+}
 
 async function createPdfForInvoice(invoice, tenantId) {
   const [associate, tenant, branding, billingSettings, invoicePix, boletoTransaction] =
@@ -104,6 +114,17 @@ router.post("/admin/associates/:associateId/generate", auth, async (req, res) =>
       pdf = await createPdfForInvoice(invoice, tenantId);
     }
 
+    await auditAssociateBilling(req, {
+      status: "success",
+      tenantId,
+      invoiceId: invoice._id,
+      associateId: invoice.associateId,
+      gatewayPaymentId: pix?.gatewayPaymentId || "",
+      amount: invoice.amountCurrent,
+      message: "Cobrança individual de associado gerada.",
+      metadata: { generatePix: Boolean(req.body?.generatePix), generatePdf: Boolean(req.body?.generatePdf) }
+    });
+
     return res.status(201).json({
       ok: true,
       invoiceId: invoice._id,
@@ -117,6 +138,14 @@ router.post("/admin/associates/:associateId/generate", auth, async (req, res) =>
     });
   } catch (error) {
     console.error("[invoice:individual:generate]", error.message);
+    await auditAssociateBilling(req, {
+      status: "failed",
+      tenantId: req.user?.tenantId,
+      associateId: req.params.associateId,
+      amount: Number(req.body?.amount || req.body?.amountOriginal || 0) || undefined,
+      message: error.message,
+      metadata: { statusCode: error.statusCode || 500 }
+    });
     return res.status(error.statusCode || 500).json({
       ok: false,
       message: error.message || "Erro ao gerar cobrança individual."

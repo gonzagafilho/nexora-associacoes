@@ -15,7 +15,8 @@ function auth(req, res, next) {
     req.user = {
       id: payload.sub,
       tenantId: payload.tenantId,
-      role: payload.role
+      role: payload.role,
+      email: payload.email
     };
 
     return next();

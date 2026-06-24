@@ -4,6 +4,7 @@ const SaasSubscriptionPayment = require("../models/SaasSubscriptionPayment");
 const Tenant = require("../models/Tenant");
 const TenantSubscription = require("../models/TenantSubscription");
 const { mercadoPagoRequest } = require("./mercadopago/tenantMercadoPagoService");
+const { createBillingAuditLog } = require("./audit/billingAuditService");
 
 const PROFESSIONAL_PLAN = "professional";
 const PROFESSIONAL_AMOUNT = 49.9;
@@ -46,6 +47,17 @@ function getPayerEmail(tenant) {
   const email = String(tenant?.email || "").trim().toLowerCase();
   if (!email || email.endsWith(".local")) return fallback;
   return email;
+}
+
+function auditRenewal(data) {
+  return createBillingAuditLog({
+    action: "saas_renewal",
+    scope: "saas",
+    userId: null,
+    userEmail: "",
+    userRole: "",
+    ...data
+  });
 }
 
 function logRenewal({ tenantId, subscriptionId, paymentId = "-", status }) {
@@ -188,6 +200,15 @@ async function runSubscriptionRenewalJob(options = {}) {
           paymentId: pendingPayment.gatewayPaymentId || pendingPayment.externalId || pendingPayment._id,
           status: "já possui cobrança"
         });
+        await auditRenewal({
+          tenantId: subscription.tenantId,
+          status: "reused",
+          saasPaymentId: pendingPayment._id,
+          gatewayPaymentId: pendingPayment.gatewayPaymentId || pendingPayment.externalId || "",
+          amount: pendingPayment.amount,
+          message: "Renovação SaaS reutilizou cobrança pendente.",
+          metadata: { subscriptionId: subscription._id }
+        });
       } else {
         const saved = await createRenewalPayment(subscription, now);
         summary.generated += 1;
@@ -196,6 +217,15 @@ async function runSubscriptionRenewalJob(options = {}) {
           subscriptionId: subscription._id,
           paymentId: saved.gatewayPaymentId || saved.externalId || saved._id,
           status: "gerado"
+        });
+        await auditRenewal({
+          tenantId: subscription.tenantId,
+          status: "success",
+          saasPaymentId: saved._id,
+          gatewayPaymentId: saved.gatewayPaymentId || saved.externalId || "",
+          amount: saved.amount,
+          message: "Renovação SaaS gerou nova cobrança PIX.",
+          metadata: { subscriptionId: subscription._id }
         });
       }
 
@@ -209,6 +239,12 @@ async function runSubscriptionRenewalJob(options = {}) {
         tenantId: subscription.tenantId,
         subscriptionId: subscription._id,
         status: `vencido: ${error.message}`
+      });
+      await auditRenewal({
+        tenantId: subscription.tenantId,
+        status: "failed",
+        message: error.message,
+        metadata: { subscriptionId: subscription._id }
       });
     }
   }

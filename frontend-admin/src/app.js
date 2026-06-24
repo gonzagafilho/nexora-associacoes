@@ -10,7 +10,9 @@ const state = {
   route: location.hash.replace("#", "") || "dashboard",
   saasFilters: { q: "", status: "", page: 1, limit: 10 },
   saasPaymentFilters: { q: "", status: "", page: 1, limit: 10 },
-  saasPayments: []
+  saasAuditFilters: { q: "", scope: "", action: "", status: "", dateFrom: "", dateTo: "", page: 1, limit: 10 },
+  saasPayments: [],
+  saasAudit: []
 };
 
 const icons = {
@@ -31,6 +33,7 @@ function icon(name) {
 }
 function money(value) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0)); }
 function date(value) { return value ? new Intl.DateTimeFormat("pt-BR").format(new Date(value)) : "—"; }
+function dateTime(value) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—"; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function toast(message, error = false) { const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; toastRoot.append(el); setTimeout(() => el.remove(), 4200); }
 function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
@@ -199,8 +202,16 @@ function saasPaymentsQuery() {
   return params.toString();
 }
 
+function saasAuditQuery() {
+  const params = new URLSearchParams({ page: state.saasAuditFilters.page, limit: state.saasAuditFilters.limit });
+  ["q", "scope", "action", "status", "dateFrom", "dateTo"].forEach((key) => {
+    if (state.saasAuditFilters[key]) params.set(key, state.saasAuditFilters[key]);
+  });
+  return params.toString();
+}
+
 function renderSaasTabs(active = "dashboard") {
-  return '<div class="tabs saas-tabs"><button class="tab ' + (active === "dashboard" ? "active" : "") + '" type="button" data-saas-tab="dashboard">Dashboard</button><button class="tab ' + (active === "payments" ? "active" : "") + '" type="button" data-saas-tab="payments">Central Financeira</button></div>';
+  return '<div class="tabs saas-tabs"><button class="tab ' + (active === "dashboard" ? "active" : "") + '" type="button" data-saas-tab="dashboard">Dashboard</button><button class="tab ' + (active === "payments" ? "active" : "") + '" type="button" data-saas-tab="payments">Central Financeira</button><button class="tab ' + (active === "audit" ? "active" : "") + '" type="button" data-saas-tab="audit">Auditoria</button></div>';
 }
 
 function renderSaasSubscriptionRows(items) {
@@ -210,6 +221,17 @@ function renderSaasSubscriptionRows(items) {
 
   return '<div class="table-wrap saas-table-wrap"><table class="table saas-table"><thead><tr><th>Associação</th><th>Plano</th><th>Status</th><th>Valor</th><th>Próxima cobrança</th><th>Fim do trial</th><th>Último pagamento</th><th>Status último pagamento</th><th>Ações</th></tr></thead><tbody>' +
     items.map((item) => '<tr><td><div class="cell-title">' + escapeHtml(item.tenantName || "—") + '</div><div class="cell-sub">' + escapeHtml(item.tenantSlug || item.tenantId || "—") + '</div></td><td>' + escapeHtml(planLabel(item.plan)) + '</td><td>' + badge(item.status) + '</td><td>' + money(item.amount) + '</td><td>' + date(item.nextBillingDate) + '</td><td>' + date(item.trialEndsAt) + '</td><td><div class="cell-title">' + date(item.lastPaymentAt) + '</div><div class="cell-sub">' + escapeHtml(item.lastPaymentId || "—") + '</div></td><td>' + (item.lastPaymentStatus ? badge(item.lastPaymentStatus) : '<span class="cell-sub">—</span>') + '</td><td><button class="button button-secondary button-sm" type="button" data-generate-saas-pix="' + escapeHtml(item.tenantId || "") + '">Gerar novo PIX</button></td></tr>').join("") +
+    '</tbody></table></div>';
+}
+
+function labelAuditAction(action) { const labels = { saas_checkout: "Checkout SaaS", saas_webhook: "Webhook SaaS", saas_renewal: "Renovação SaaS", saas_manual_pix: "PIX manual SaaS", associate_invoice_manual: "Cobrança associado" }; return labels[action] || action || "—"; }
+function labelScope(scope) { const labels = { saas: "SaaS", associate: "Associado" }; return labels[scope] || scope || "—"; }
+function badgeNeutral(value) { return '<span class="badge badge-inactive">' + escapeHtml(value || "—") + '</span>'; }
+function renderSaasAuditRows(items) {
+  state.saasAudit = items || [];
+  if (!state.saasAudit.length) return '<div class="empty saas-empty">Nenhum evento de auditoria encontrado.</div>';
+  return '<div class="table-wrap saas-table-wrap"><table class="table saas-table saas-audit-table"><thead><tr><th>Data/hora</th><th>Associação</th><th>Usuário</th><th>Tipo</th><th>Ação</th><th>Status</th><th>Valor</th><th>PaymentId</th><th>InvoiceId</th><th>IP</th><th>Mensagem</th></tr></thead><tbody>' +
+    state.saasAudit.map((item) => '<tr><td>' + dateTime(item.createdAt) + '</td><td><div class="cell-title">' + escapeHtml(item.tenantName || "—") + '</div><div class="cell-sub">' + escapeHtml(item.tenantId || "—") + '</div></td><td><div class="cell-title">' + escapeHtml(item.userEmail || "—") + '</div><div class="cell-sub">' + escapeHtml(item.userRole || "—") + '</div></td><td>' + badgeNeutral(labelScope(item.scope)) + '</td><td>' + badgeNeutral(labelAuditAction(item.action)) + '</td><td>' + badge(item.status) + '</td><td>' + money(item.amount) + '</td><td>' + escapeHtml(item.gatewayPaymentId || "—") + '</td><td>' + escapeHtml(item.invoiceId || "—") + '</td><td>' + escapeHtml(item.ip || "—") + '</td><td>' + escapeHtml(item.message || "—") + '</td></tr>').join("") +
     '</tbody></table></div>';
 }
 
@@ -226,7 +248,7 @@ function renderSaasPaymentRows(items) {
 
 function renderSaasPagination(list, kind = "subscriptions") {
   if (list.totalPages <= 1) return '';
-  const attr = kind === "payments" ? "data-saas-payment-page" : "data-saas-page";
+  const attr = kind === "payments" ? "data-saas-payment-page" : kind === "audit" ? "data-saas-audit-page" : "data-saas-page";
   const previousDisabled = list.page <= 1 ? ' disabled' : '';
   const nextDisabled = list.page >= list.totalPages ? ' disabled' : '';
   return '<div class="saas-pagination"><button class="button button-secondary button-sm" ' + attr + '="' + (list.page - 1) + '"' + previousDisabled + '>Anterior</button><span>Página ' + list.page + ' de ' + list.totalPages + '</span><button class="button button-secondary button-sm" ' + attr + '="' + (list.page + 1) + '"' + nextDisabled + '>Próxima</button></div>';
@@ -278,6 +300,23 @@ function bindSaasDashboard() {
   content().querySelectorAll("[data-generate-saas-pix]").forEach((button) => button.addEventListener("click", () => generateSaasManualPix(button.dataset.generateSaasPix)));
 }
 
+function bindSaasAudit() {
+  const form = content().querySelector("[data-saas-audit-filters]");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    ["q", "scope", "action", "status", "dateFrom", "dateTo"].forEach((key) => { state.saasAuditFilters[key] = String(data.get(key) || "").trim(); });
+    state.saasAuditFilters.page = 1;
+    await renderSaasDashboard("audit");
+  });
+  form?.querySelectorAll("select,input[type=date]").forEach((el) => el.addEventListener("change", () => form.requestSubmit()));
+  content().querySelectorAll("[data-saas-audit-page]").forEach((button) => button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    state.saasAuditFilters.page = Number(button.dataset.saasAuditPage || 1);
+    await renderSaasDashboard("audit");
+  }));
+}
+
 function bindSaasPayments() {
   const form = content().querySelector("[data-saas-payment-filters]");
   form?.addEventListener("submit", async (event) => {
@@ -307,10 +346,11 @@ function bindSaasTabs() {
 
 async function renderSaasDashboard(activeTab = "dashboard") {
   try {
-    const [data, list, payments] = await Promise.all([
+    const [data, list, payments, audit] = await Promise.all([
       apiRequest("/api/subscription/admin/dashboard", { token: state.token }),
       apiRequest("/api/subscription/admin/list?" + saasListQuery(), { token: state.token }),
-      apiRequest("/api/subscription/admin/payments?" + saasPaymentsQuery(), { token: state.token })
+      apiRequest("/api/subscription/admin/payments?" + saasPaymentsQuery(), { token: state.token }),
+      apiRequest("/api/subscription/admin/audit?" + saasAuditQuery(), { token: state.token })
     ]);
     const status = state.saasFilters.status;
     const paymentStatus = state.saasPaymentFilters.status;
@@ -324,10 +364,14 @@ async function renderSaasDashboard(activeTab = "dashboard") {
       metricCard("Total de Associações", data.totalTenants, "Tenants cadastrados", "is-info") +
     '</section><section class="card saas-list-card"><header class="saas-list-head"><div><h2>Lista de Assinaturas</h2><p>' + list.total + ' assinatura(s) encontrada(s)</p></div></header><form class="toolbar saas-filterbar" data-saas-filters><input class="input" name="q" placeholder="Buscar por associação ou slug" value="' + escapeHtml(state.saasFilters.q) + '"><select class="select" name="status"><option value=""' + (!status ? ' selected' : '') + '>Todos os status</option><option value="trialing"' + (status === 'trialing' ? ' selected' : '') + '>Trialing</option><option value="active"' + (status === 'active' ? ' selected' : '') + '>Active</option><option value="overdue"' + (status === 'overdue' ? ' selected' : '') + '>Overdue</option><option value="cancelled"' + (status === 'cancelled' ? ' selected' : '') + '>Cancelled</option></select><button class="button button-primary" type="submit">Filtrar</button></form>' + renderSaasSubscriptionRows(list.items || []) + renderSaasPagination(list) + '</section>';
     const paymentsHtml = '<section class="card saas-list-card"><header class="saas-list-head"><div><h2>Central Financeira</h2><p>' + payments.total + ' pagamento(s) encontrado(s)</p></div></header><form class="toolbar saas-filterbar" data-saas-payment-filters><input class="input" name="q" placeholder="Buscar por associação, slug ou paymentId" value="' + escapeHtml(state.saasPaymentFilters.q) + '"><select class="select" name="status"><option value=""' + (!paymentStatus ? ' selected' : '') + '>Todos os status</option><option value="pending"' + (paymentStatus === 'pending' ? ' selected' : '') + '>Pending</option><option value="approved"' + (paymentStatus === 'approved' ? ' selected' : '') + '>Approved</option><option value="paid"' + (paymentStatus === 'paid' ? ' selected' : '') + '>Paid</option><option value="rejected"' + (paymentStatus === 'rejected' ? ' selected' : '') + '>Rejected</option><option value="cancelled"' + (paymentStatus === 'cancelled' ? ' selected' : '') + '>Cancelled</option><option value="overdue"' + (paymentStatus === 'overdue' ? ' selected' : '') + '>Overdue</option></select><button class="button button-primary" type="submit">Filtrar</button></form>' + renderSaasPaymentRows(payments.items || []) + renderSaasPagination(payments, "payments") + '</section>';
+    const auditStatus = state.saasAuditFilters.status;
+    const auditScope = state.saasAuditFilters.scope;
+    const auditAction = state.saasAuditFilters.action;
+    const auditHtml = '<section class="card saas-list-card"><header class="saas-list-head"><div><h2>Auditoria</h2><p>' + audit.total + ' evento(s) encontrado(s)</p></div></header><form class="toolbar saas-filterbar saas-audit-filterbar" data-saas-audit-filters><input class="input" name="q" placeholder="Buscar por associação, usuário, paymentId ou mensagem" value="' + escapeHtml(state.saasAuditFilters.q) + '"><select class="select" name="scope"><option value=""' + (!auditScope ? ' selected' : '') + '>Todos os tipos</option><option value="saas"' + (auditScope === 'saas' ? ' selected' : '') + '>SaaS</option><option value="associate"' + (auditScope === 'associate' ? ' selected' : '') + '>Associado</option></select><select class="select" name="action"><option value=""' + (!auditAction ? ' selected' : '') + '>Todas as ações</option><option value="saas_checkout"' + (auditAction === 'saas_checkout' ? ' selected' : '') + '>Checkout SaaS</option><option value="saas_webhook"' + (auditAction === 'saas_webhook' ? ' selected' : '') + '>Webhook SaaS</option><option value="saas_renewal"' + (auditAction === 'saas_renewal' ? ' selected' : '') + '>Renovação SaaS</option><option value="saas_manual_pix"' + (auditAction === 'saas_manual_pix' ? ' selected' : '') + '>PIX manual SaaS</option><option value="associate_invoice_manual"' + (auditAction === 'associate_invoice_manual' ? ' selected' : '') + '>Cobrança associado</option></select><select class="select" name="status"><option value=""' + (!auditStatus ? ' selected' : '') + '>Todos os status</option><option value="success"' + (auditStatus === 'success' ? ' selected' : '') + '>Success</option><option value="failed"' + (auditStatus === 'failed' ? ' selected' : '') + '>Failed</option><option value="ignored"' + (auditStatus === 'ignored' ? ' selected' : '') + '>Ignored</option><option value="reused"' + (auditStatus === 'reused' ? ' selected' : '') + '>Reused</option></select><input class="input" type="date" name="dateFrom" value="' + escapeHtml(state.saasAuditFilters.dateFrom) + '"><input class="input" type="date" name="dateTo" value="' + escapeHtml(state.saasAuditFilters.dateTo) + '"><button class="button button-primary" type="submit">Filtrar</button></form>' + renderSaasAuditRows(audit.items || []) + renderSaasPagination(audit, "audit") + '</section>';
 
-    content().innerHTML = pageHead("SaaS", "Dashboard executivo e Central Financeira da plataforma NEXORA.") + renderSaasTabs(activeTab) + (activeTab === "payments" ? paymentsHtml : dashboardHtml);
+    content().innerHTML = pageHead("SaaS", "Dashboard executivo e Central Financeira da plataforma NEXORA.") + renderSaasTabs(activeTab) + (activeTab === "payments" ? paymentsHtml : activeTab === "audit" ? auditHtml : dashboardHtml);
     bindSaasTabs();
-    if (activeTab === "payments") bindSaasPayments(); else bindSaasDashboard();
+    if (activeTab === "payments") bindSaasPayments(); else if (activeTab === "audit") bindSaasAudit(); else bindSaasDashboard();
   } catch (error) {
     if (error.status === 401 || /Token inválido|Token não informado|401/.test(error.message)) {
       renderSaasSessionExpired();

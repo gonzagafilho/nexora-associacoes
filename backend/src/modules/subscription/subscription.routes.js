@@ -2,10 +2,12 @@ const express = require("express");
 const crypto = require("crypto");
 const auth = require("../../middlewares/auth");
 const SaasSubscriptionPayment = require("../../models/SaasSubscriptionPayment");
+const BillingAuditLog = require("../../models/BillingAuditLog");
 const Tenant = require("../../models/Tenant");
 const TenantSubscription = require("../../models/TenantSubscription");
 const User = require("../../models/User");
 const { mercadoPagoRequest } = require("../../services/mercadopago/tenantMercadoPagoService");
+const { createBillingAuditLog } = require("../../services/audit/billingAuditService");
 
 const router = express.Router();
 
@@ -92,6 +94,14 @@ function normalizeObjectId(value) {
   return /^[a-f\d]{24}$/i.test(id) ? id : "";
 }
 
+function auditSaas(req, data) {
+  return createBillingAuditLog({
+    req,
+    scope: "saas",
+    ...data
+  });
+}
+
 async function buildSubscriptionListFilter(query) {
   const filter = {};
   const status = String(query.status || "").trim();
@@ -108,6 +118,63 @@ async function buildSubscriptionListFilter(query) {
   }).select("_id").lean();
 
   filter.tenantId = { $in: tenants.map((tenant) => tenant._id) };
+  return filter;
+}
+
+async function buildAdminAuditFilter(query) {
+  const filter = {};
+  const scope = String(query.scope || "").trim();
+  const action = String(query.action || "").trim();
+  const status = String(query.status || "").trim();
+  const tenantId = normalizeObjectId(query.tenantId);
+  const q = String(query.q || "").trim();
+
+  if (scope) filter.scope = scope;
+  if (action) filter.action = action;
+  if (status) filter.status = status;
+  if (tenantId) filter.tenantId = tenantId;
+
+  if (query.dateFrom || query.dateTo) {
+    filter.createdAt = {};
+    if (query.dateFrom) filter.createdAt.$gte = new Date(query.dateFrom);
+    if (query.dateTo) {
+      const to = new Date(query.dateTo);
+      if (!Number.isNaN(to.getTime())) to.setHours(23, 59, 59, 999);
+      filter.createdAt.$lte = to;
+    }
+  }
+
+  if (!q) return filter;
+
+  const regex = new RegExp(escapeRegExp(q), "i");
+  const tenants = await Tenant.find({
+    $or: [{ name: regex }, { slug: regex }]
+  }).select("_id").lean();
+
+  const or = [
+    { userEmail: regex },
+    { userRole: regex },
+    { ip: regex },
+    { action: regex },
+    { scope: regex },
+    { status: regex },
+    { message: regex },
+    { gatewayPaymentId: regex }
+  ];
+
+  const qObjectId = normalizeObjectId(q);
+  if (qObjectId) {
+    or.push(
+      { _id: qObjectId },
+      { tenantId: qObjectId },
+      { invoiceId: qObjectId },
+      { associateId: qObjectId },
+      { saasPaymentId: qObjectId }
+    );
+  }
+  if (tenants.length) or.push({ tenantId: { $in: tenants.map((tenant) => tenant._id) } });
+
+  filter.$or = or;
   return filter;
 }
 
@@ -290,6 +357,50 @@ async function generateManualSaasPix(req, tenantId) {
   return formatSaasPixPayment(saved, false);
 }
 
+async function listAdminAudit(query) {
+  const page = toPositiveInt(query.page, 1, 10000);
+  const limit = toPositiveInt(query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const filter = await buildAdminAuditFilter(query);
+
+  const [total, logs] = await Promise.all([
+    BillingAuditLog.countDocuments(filter),
+    BillingAuditLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean()
+  ]);
+
+  const tenantIds = logs.map((log) => log.tenantId).filter(Boolean);
+  const tenants = await Tenant.find({ _id: { $in: tenantIds } }).select("name slug").lean();
+  const tenantsById = new Map(tenants.map((tenant) => [String(tenant._id), tenant]));
+
+  return {
+    items: logs.map((log) => {
+      const tenant = tenantsById.get(String(log.tenantId)) || {};
+      return {
+        id: log._id,
+        tenantId: log.tenantId,
+        tenantName: tenant.name || "",
+        userEmail: log.userEmail || "",
+        userRole: log.userRole || "",
+        ip: log.ip || "",
+        action: log.action,
+        scope: log.scope,
+        status: log.status,
+        message: log.message || "",
+        invoiceId: log.invoiceId || null,
+        associateId: log.associateId || null,
+        saasPaymentId: log.saasPaymentId || null,
+        gatewayPaymentId: log.gatewayPaymentId || "",
+        amount: log.amount || 0,
+        createdAt: log.createdAt
+      };
+    }),
+    page,
+    limit,
+    total,
+    totalPages: Math.ceil(total / limit) || 0
+  };
+}
+
 async function listAdminPayments(query) {
   const page = toPositiveInt(query.page, 1, 10000);
   const limit = toPositiveInt(query.limit, 20, 100);
@@ -338,6 +449,19 @@ async function listAdminPayments(query) {
   };
 }
 
+router.get("/admin/audit", auth, requireAdmin, async (req, res) => {
+  try {
+    const result = await listAdminAudit(req.query || {});
+    return res.json(result);
+  } catch (error) {
+    console.error("[SAAS AUDIT] erro", error.message);
+    return res.status(500).json({
+      ok: false,
+      message: "Erro ao listar auditoria de cobranças."
+    });
+  }
+});
+
 router.post("/admin/:tenantId/generate-pix", auth, requireAdmin, async (req, res) => {
   try {
     const tenantId = normalizeObjectId(req.params.tenantId);
@@ -346,9 +470,26 @@ router.post("/admin/:tenantId/generate-pix", auth, requireAdmin, async (req, res
     }
 
     const result = await generateManualSaasPix(req, tenantId);
+    await auditSaas(req, {
+      action: "saas_manual_pix",
+      status: result.reused ? "reused" : "success",
+      tenantId,
+      saasPaymentId: result.paymentId,
+      gatewayPaymentId: result.gatewayPaymentId,
+      amount: result.amount,
+      message: result.reused ? "PIX SaaS pendente reutilizado." : "PIX SaaS manual gerado.",
+      metadata: { reused: result.reused }
+    });
     return res.json({ ok: true, ...result });
   } catch (error) {
     console.error("[SAAS MANUAL PIX] erro", error.message);
+    await auditSaas(req, {
+      action: "saas_manual_pix",
+      status: "failed",
+      tenantId: normalizeObjectId(req.params.tenantId) || undefined,
+      message: error.message,
+      metadata: { statusCode: error.statusCode || 500 }
+    });
     return res.status(error.statusCode || 500).json({
       ok: false,
       message: error.statusCode ? error.message : "Erro ao gerar PIX manual SaaS."
@@ -441,6 +582,16 @@ router.post("/checkout", auth, async (req, res) => {
     }).lean();
 
     if (existing) {
+      await auditSaas(req, {
+        action: "saas_checkout",
+        status: "reused",
+        tenantId,
+        saasPaymentId: existing._id,
+        gatewayPaymentId: existing.gatewayPaymentId || existing.externalId || "",
+        amount: existing.amount,
+        message: "PIX SaaS pendente reutilizado no checkout.",
+        metadata: { source: existing.source || "checkout" }
+      });
       return res.json({
         ok: true,
         paymentId: existing.gatewayPaymentId || existing.externalId,
@@ -505,6 +656,17 @@ router.post("/checkout", auth, async (req, res) => {
       lastCheckedAt: new Date()
     });
 
+    await auditSaas(req, {
+      action: "saas_checkout",
+      status: "success",
+      tenantId,
+      saasPaymentId: saved._id,
+      gatewayPaymentId: saved.gatewayPaymentId || saved.externalId || "",
+      amount: saved.amount,
+      message: "PIX SaaS gerado no checkout.",
+      metadata: { source: "checkout" }
+    });
+
     return res.json({
       ok: true,
       paymentId: saved.gatewayPaymentId || saved.externalId,
@@ -517,6 +679,13 @@ router.post("/checkout", auth, async (req, res) => {
     });
   } catch (error) {
     console.error("[SAAS CHECKOUT] erro", error.message);
+    await auditSaas(req, {
+      action: "saas_checkout",
+      status: "failed",
+      tenantId: req.user?.tenantId,
+      message: error.message,
+      metadata: { statusCode: error.statusCode || 500 }
+    });
     return res.status(error.statusCode || 500).json({
       ok: false,
       message: error.statusCode ? error.message : "Erro ao gerar Pix da assinatura."
@@ -558,7 +727,7 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
   });
 
   if (!subscriptionPayment) {
-    return { ok: false, reason: "subscription_payment_not_found" };
+    return { ok: false, reason: "subscription_payment_not_found", gatewayPaymentId: String(paymentId) };
   }
 
   const payment = await mercadoPagoRequest(`/v1/payments/${paymentId}`, accessToken, {
@@ -583,7 +752,11 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
       ok: true,
       activated: false,
       alreadyPaid: wasAlreadyPaid,
-      status: subscriptionPayment.status
+      status: subscriptionPayment.status,
+      tenantId: subscriptionPayment.tenantId,
+      saasPaymentId: subscriptionPayment._id,
+      gatewayPaymentId: subscriptionPayment.gatewayPaymentId || subscriptionPayment.externalId || String(paymentId),
+      amount: subscriptionPayment.amount
     };
   }
 
@@ -598,7 +771,11 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
       ok: true,
       activated: false,
       alreadyPaid: true,
-      status: subscriptionPayment.status
+      status: subscriptionPayment.status,
+      tenantId: subscriptionPayment.tenantId,
+      saasPaymentId: subscriptionPayment._id,
+      gatewayPaymentId: subscriptionPayment.gatewayPaymentId || subscriptionPayment.externalId || String(paymentId),
+      amount: subscriptionPayment.amount
     };
   }
 
@@ -627,7 +804,11 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
     ok: true,
     activated: true,
     alreadyPaid: false,
-    status: subscriptionPayment.status
+    status: subscriptionPayment.status,
+    tenantId: subscriptionPayment.tenantId,
+    saasPaymentId: subscriptionPayment._id,
+    gatewayPaymentId: subscriptionPayment.gatewayPaymentId || subscriptionPayment.externalId || String(paymentId),
+    amount: subscriptionPayment.amount
   };
 }
 
@@ -642,12 +823,29 @@ router.post("/webhooks/mercadopago", async (req, res) => {
     }
 
     const result = await syncSaasPaymentFromMercadoPago(paymentId, req.body || {});
+    await auditSaas(req, {
+      action: "saas_webhook",
+      status: result.ok ? (result.reason ? "ignored" : "success") : "ignored",
+      tenantId: result.tenantId,
+      saasPaymentId: result.saasPaymentId,
+      gatewayPaymentId: result.gatewayPaymentId || String(paymentId),
+      amount: result.amount,
+      message: result.reason || `Webhook SaaS processado com status ${result.status || "desconhecido"}.`,
+      metadata: { activated: result.activated, alreadyPaid: result.alreadyPaid }
+    });
     return res.json({
       ok: true,
       result
     });
   } catch (error) {
     console.error("[SAAS WEBHOOK] erro", error.message);
+    await auditSaas(req, {
+      action: "saas_webhook",
+      status: "failed",
+      gatewayPaymentId: String(getWebhookPaymentId(req) || ""),
+      message: error.message,
+      metadata: { statusCode: error.statusCode || 500 }
+    });
     return res.status(error.statusCode || 500).json({
       ok: false,
       message: error.statusCode ? error.message : "Erro ao processar webhook SaaS."
