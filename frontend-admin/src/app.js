@@ -8,7 +8,9 @@ const state = {
   tenant: JSON.parse(localStorage.getItem("nexora_tenant") || "null"),
   me: null,
   route: location.hash.replace("#", "") || "dashboard",
-  saasFilters: { q: "", status: "", page: 1, limit: 10 }
+  saasFilters: { q: "", status: "", page: 1, limit: 10 },
+  saasPaymentFilters: { q: "", status: "", page: 1, limit: 10 },
+  saasPayments: []
 };
 
 const icons = {
@@ -31,7 +33,7 @@ function money(value) { return new Intl.NumberFormat("pt-BR", { style: "currency
 function date(value) { return value ? new Intl.DateTimeFormat("pt-BR").format(new Date(value)) : "—"; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
 function toast(message, error = false) { const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; toastRoot.append(el); setTimeout(() => el.remove(), 4200); }
-function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", approved: "Aprovado", in_process: "Processando" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
+function badge(status) { const labels = { active: "Ativo", inactive: "Inativo", paid: "Pago", pending: "Pendente", overdue: "Vencido", trialing: "Trial", blocked: "Bloqueado", cancelled: "Cancelado", rejected: "Rejeitado", approved: "Aprovado", in_process: "Processando" }; return `<span class="badge badge-${status}">${labels[status] || escapeHtml(status)}</span>`; }
 function field(name, label, value = "", type = "text", required = false, extra = "") { return `<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${escapeHtml(value)}" ${required ? "required" : ""} ${extra}></label>`; }
 function selectField(name, label, options, value) { return `<label class="field"><span>${label}</span><select class="select" name="${name}">${options.map(([key, text]) => `<option value="${key}" ${key === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`; }
 function statusFilter(value = "") { return `<select class="select" data-filter-status style="max-width:190px"><option value="">Todos os status</option><option value="pending" ${value === "pending" ? "selected" : ""}>Pendentes</option><option value="paid" ${value === "paid" ? "selected" : ""}>Pagas</option><option value="overdue" ${value === "overdue" ? "selected" : ""}>Vencidas</option><option value="cancelled" ${value === "cancelled" ? "selected" : ""}>Canceladas</option></select>`; }
@@ -186,6 +188,17 @@ function saasListQuery() {
   return params.toString();
 }
 
+function saasPaymentsQuery() {
+  const params = new URLSearchParams({ page: state.saasPaymentFilters.page, limit: state.saasPaymentFilters.limit });
+  if (state.saasPaymentFilters.q) params.set("q", state.saasPaymentFilters.q);
+  if (state.saasPaymentFilters.status) params.set("status", state.saasPaymentFilters.status);
+  return params.toString();
+}
+
+function renderSaasTabs(active = "dashboard") {
+  return '<div class="tabs saas-tabs"><button class="tab ' + (active === "dashboard" ? "active" : "") + '" type="button" data-saas-tab="dashboard">Dashboard</button><button class="tab ' + (active === "payments" ? "active" : "") + '" type="button" data-saas-tab="payments">Central Financeira</button></div>';
+}
+
 function renderSaasSubscriptionRows(items) {
   if (!items.length) {
     return '<div class="empty saas-empty">Nenhuma assinatura encontrada.</div>';
@@ -196,11 +209,39 @@ function renderSaasSubscriptionRows(items) {
     '</tbody></table></div>';
 }
 
-function renderSaasPagination(list) {
+function renderSaasPaymentRows(items) {
+  state.saasPayments = items || [];
+  if (!state.saasPayments.length) {
+    return '<div class="empty saas-empty">Nenhum pagamento encontrado.</div>';
+  }
+
+  return '<div class="table-wrap saas-table-wrap"><table class="table saas-table saas-payments-table"><thead><tr><th>Associação</th><th>Plano</th><th>Valor</th><th>Status</th><th>Gateway</th><th>Payment ID Mercado Pago</th><th>Criado em</th><th>Vencimento</th><th>Pago em</th><th>Ações</th></tr></thead><tbody>' +
+    state.saasPayments.map((item, index) => '<tr><td><div class="cell-title">' + escapeHtml(item.tenantName || "—") + '</div><div class="cell-sub">' + escapeHtml(item.tenantSlug || item.tenantId || "—") + '</div></td><td>' + escapeHtml(planLabel(item.plan)) + '</td><td>' + money(item.amount) + '</td><td>' + badge(item.status) + '</td><td>' + escapeHtml(item.gateway || "—") + '</td><td><div class="cell-title">' + escapeHtml(item.gatewayPaymentId || "—") + '</div><div class="cell-sub">' + escapeHtml(item.paymentId || "—") + '</div></td><td>' + date(item.createdAt) + '</td><td>' + date(item.expiresAt) + '</td><td>' + date(item.paidAt) + '</td><td>' + ((item.copyPaste || item.qrCodeBase64) ? '<button class="button button-secondary button-sm" type="button" data-view-saas-pix="' + index + '">Ver PIX</button>' : '<span class="cell-sub">—</span>') + '</td></tr>').join("") +
+    '</tbody></table></div>';
+}
+
+function renderSaasPagination(list, kind = "subscriptions") {
   if (list.totalPages <= 1) return '';
+  const attr = kind === "payments" ? "data-saas-payment-page" : "data-saas-page";
   const previousDisabled = list.page <= 1 ? ' disabled' : '';
   const nextDisabled = list.page >= list.totalPages ? ' disabled' : '';
-  return '<div class="saas-pagination"><button class="button button-secondary button-sm" data-saas-page="' + (list.page - 1) + '"' + previousDisabled + '>Anterior</button><span>Página ' + list.page + ' de ' + list.totalPages + '</span><button class="button button-secondary button-sm" data-saas-page="' + (list.page + 1) + '"' + nextDisabled + '>Próxima</button></div>';
+  return '<div class="saas-pagination"><button class="button button-secondary button-sm" ' + attr + '="' + (list.page - 1) + '"' + previousDisabled + '>Anterior</button><span>Página ' + list.page + ' de ' + list.totalPages + '</span><button class="button button-secondary button-sm" ' + attr + '="' + (list.page + 1) + '"' + nextDisabled + '>Próxima</button></div>';
+}
+
+function qrImageSrc(value) {
+  const src = String(value || "").trim();
+  if (!src) return "";
+  return src.startsWith("data:") ? src : "data:image/png;base64," + src;
+}
+
+function openSaasPixModal(payment) {
+  const pix = payment.copyPaste || payment.qrCode || "";
+  const image = qrImageSrc(payment.qrCodeBase64);
+  openModal("PIX da assinatura", '<div class="detail-grid"><div class="detail-item"><small>Associação</small>' + escapeHtml(payment.tenantName || "—") + '</div><div class="detail-item"><small>Payment ID Mercado Pago</small>' + escapeHtml(payment.gatewayPaymentId || "—") + '</div><div class="detail-item"><small>Status</small>' + badge(payment.status) + '</div></div>' + (image ? '<div class="saas-pix-qr"><img src="' + escapeHtml(image) + '" alt="QR Code PIX"></div>' : '') + '<div class="pix-code">' + escapeHtml(pix || "PIX copia e cola indisponível.") + '</div><div class="actions" style="margin-top:14px"><button class="button button-primary" type="button" data-copy-saas-pix ' + (!pix ? 'disabled' : '') + '>Copiar Pix copia e cola</button></div>', null, "Fechar");
+  document.querySelector("[data-copy-saas-pix]")?.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(pix);
+    toast("PIX copiado.");
+  });
 }
 
 function bindSaasDashboard() {
@@ -211,24 +252,53 @@ function bindSaasDashboard() {
     state.saasFilters.q = String(data.get("q") || "").trim();
     state.saasFilters.status = String(data.get("status") || "");
     state.saasFilters.page = 1;
-    await renderSaasDashboard();
+    await renderSaasDashboard("dashboard");
   });
   form?.querySelector('[name="status"]')?.addEventListener("change", () => form.requestSubmit());
   content().querySelectorAll("[data-saas-page]").forEach((button) => button.addEventListener("click", async () => {
     if (button.disabled) return;
     state.saasFilters.page = Number(button.dataset.saasPage || 1);
-    await renderSaasDashboard();
+    await renderSaasDashboard("dashboard");
   }));
 }
 
-async function renderSaasDashboard() {
+function bindSaasPayments() {
+  const form = content().querySelector("[data-saas-payment-filters]");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    state.saasPaymentFilters.q = String(data.get("q") || "").trim();
+    state.saasPaymentFilters.status = String(data.get("status") || "");
+    state.saasPaymentFilters.page = 1;
+    await renderSaasDashboard("payments");
+  });
+  form?.querySelector('[name="status"]')?.addEventListener("change", () => form.requestSubmit());
+  content().querySelectorAll("[data-saas-payment-page]").forEach((button) => button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    state.saasPaymentFilters.page = Number(button.dataset.saasPaymentPage || 1);
+    await renderSaasDashboard("payments");
+  }));
+  content().querySelectorAll("[data-view-saas-pix]").forEach((button) => button.addEventListener("click", () => {
+    openSaasPixModal(state.saasPayments[Number(button.dataset.viewSaasPix)] || {});
+  }));
+}
+
+function bindSaasTabs() {
+  content().querySelectorAll("[data-saas-tab]").forEach((button) => button.addEventListener("click", async () => {
+    await renderSaasDashboard(button.dataset.saasTab || "dashboard");
+  }));
+}
+
+async function renderSaasDashboard(activeTab = "dashboard") {
   try {
-    const [data, list] = await Promise.all([
+    const [data, list, payments] = await Promise.all([
       apiRequest("/api/subscription/admin/dashboard", { token: state.token }),
-      apiRequest("/api/subscription/admin/list?" + saasListQuery(), { token: state.token })
+      apiRequest("/api/subscription/admin/list?" + saasListQuery(), { token: state.token }),
+      apiRequest("/api/subscription/admin/payments?" + saasPaymentsQuery(), { token: state.token })
     ]);
     const status = state.saasFilters.status;
-    content().innerHTML = pageHead("SaaS", "Dashboard executivo de assinaturas da plataforma NEXORA.") + '<section class="saas-hero"><div><span>Assinaturas</span><h2>' + money(data.monthlyRevenue) + '</h2><p>Receita mensal recorrente estimada</p></div><div class="saas-hero-side"><strong>' + money(data.annualRevenue) + '</strong><small>Receita anual projetada</small></div></section><section class="saas-metrics">' +
+    const paymentStatus = state.saasPaymentFilters.status;
+    const dashboardHtml = '<section class="saas-hero"><div><span>Assinaturas</span><h2>' + money(data.monthlyRevenue) + '</h2><p>Receita mensal recorrente estimada</p></div><div class="saas-hero-side"><strong>' + money(data.annualRevenue) + '</strong><small>Receita anual projetada</small></div></section><section class="saas-metrics">' +
       metricCard("Assinaturas Ativas", data.activeSubscriptions, subscriptionStatusLabel("active"), "is-good") +
       metricCard("Em Trial", data.trialSubscriptions, subscriptionStatusLabel("trialing"), "is-info") +
       metricCard("Inadimplentes", data.overdueSubscriptions, subscriptionStatusLabel("overdue"), data.overdueSubscriptions > 0 ? "is-danger" : "") +
@@ -237,7 +307,11 @@ async function renderSaasDashboard() {
       metricCard("Receita Anual", money(data.annualRevenue), "Projeção 12 meses", "is-money") +
       metricCard("Total de Associações", data.totalTenants, "Tenants cadastrados", "is-info") +
     '</section><section class="card saas-list-card"><header class="saas-list-head"><div><h2>Lista de Assinaturas</h2><p>' + list.total + ' assinatura(s) encontrada(s)</p></div></header><form class="toolbar saas-filterbar" data-saas-filters><input class="input" name="q" placeholder="Buscar por associação ou slug" value="' + escapeHtml(state.saasFilters.q) + '"><select class="select" name="status"><option value=""' + (!status ? ' selected' : '') + '>Todos os status</option><option value="trialing"' + (status === 'trialing' ? ' selected' : '') + '>Trialing</option><option value="active"' + (status === 'active' ? ' selected' : '') + '>Active</option><option value="overdue"' + (status === 'overdue' ? ' selected' : '') + '>Overdue</option><option value="cancelled"' + (status === 'cancelled' ? ' selected' : '') + '>Cancelled</option></select><button class="button button-primary" type="submit">Filtrar</button></form>' + renderSaasSubscriptionRows(list.items || []) + renderSaasPagination(list) + '</section>';
-    bindSaasDashboard();
+    const paymentsHtml = '<section class="card saas-list-card"><header class="saas-list-head"><div><h2>Central Financeira</h2><p>' + payments.total + ' pagamento(s) encontrado(s)</p></div></header><form class="toolbar saas-filterbar" data-saas-payment-filters><input class="input" name="q" placeholder="Buscar por associação, slug ou paymentId" value="' + escapeHtml(state.saasPaymentFilters.q) + '"><select class="select" name="status"><option value=""' + (!paymentStatus ? ' selected' : '') + '>Todos os status</option><option value="pending"' + (paymentStatus === 'pending' ? ' selected' : '') + '>Pending</option><option value="approved"' + (paymentStatus === 'approved' ? ' selected' : '') + '>Approved</option><option value="paid"' + (paymentStatus === 'paid' ? ' selected' : '') + '>Paid</option><option value="rejected"' + (paymentStatus === 'rejected' ? ' selected' : '') + '>Rejected</option><option value="cancelled"' + (paymentStatus === 'cancelled' ? ' selected' : '') + '>Cancelled</option><option value="overdue"' + (paymentStatus === 'overdue' ? ' selected' : '') + '>Overdue</option></select><button class="button button-primary" type="submit">Filtrar</button></form>' + renderSaasPaymentRows(payments.items || []) + renderSaasPagination(payments, "payments") + '</section>';
+
+    content().innerHTML = pageHead("SaaS", "Dashboard executivo e Central Financeira da plataforma NEXORA.") + renderSaasTabs(activeTab) + (activeTab === "payments" ? paymentsHtml : dashboardHtml);
+    bindSaasTabs();
+    if (activeTab === "payments") bindSaasPayments(); else bindSaasDashboard();
   } catch (error) {
     if (error.status === 401 || /Token inválido|Token não informado|401/.test(error.message)) {
       renderSaasSessionExpired();

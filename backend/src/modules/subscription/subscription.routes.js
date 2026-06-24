@@ -86,6 +86,11 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeObjectId(value) {
+  const id = String(value || "").trim();
+  return /^[a-f\d]{24}$/i.test(id) ? id : "";
+}
+
 async function buildSubscriptionListFilter(query) {
   const filter = {};
   const status = String(query.status || "").trim();
@@ -102,6 +107,36 @@ async function buildSubscriptionListFilter(query) {
   }).select("_id").lean();
 
   filter.tenantId = { $in: tenants.map((tenant) => tenant._id) };
+  return filter;
+}
+
+async function buildAdminPaymentFilter(query) {
+  const filter = {};
+  const status = String(query.status || "").trim();
+  const tenantId = normalizeObjectId(query.tenantId);
+  const q = String(query.q || "").trim();
+
+  if (status) filter.status = status;
+  if (tenantId) filter.tenantId = tenantId;
+
+  if (!q) return filter;
+
+  const regex = new RegExp(escapeRegExp(q), "i");
+  const tenants = await Tenant.find({
+    $or: [{ name: regex }, { slug: regex }]
+  }).select("_id").lean();
+
+  const or = [
+    { gatewayPaymentId: regex },
+    { externalId: regex },
+    { externalReference: regex }
+  ];
+
+  const qObjectId = normalizeObjectId(q);
+  if (qObjectId) or.push({ _id: qObjectId }, { tenantId: qObjectId });
+  if (tenants.length) or.push({ tenantId: { $in: tenants.map((tenant) => tenant._id) } });
+
+  filter.$or = or;
   return filter;
 }
 
@@ -152,6 +187,67 @@ async function listAdminSubscriptions(query) {
     totalPages: Math.ceil(total / limit) || 0
   };
 }
+
+async function listAdminPayments(query) {
+  const page = toPositiveInt(query.page, 1, 10000);
+  const limit = toPositiveInt(query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const filter = await buildAdminPaymentFilter(query);
+
+  const [total, payments] = await Promise.all([
+    SaasSubscriptionPayment.countDocuments(filter),
+    SaasSubscriptionPayment.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean()
+  ]);
+
+  const tenantIds = payments.map((payment) => payment.tenantId).filter(Boolean);
+  const tenants = await Tenant.find({ _id: { $in: tenantIds } }).select("name slug").lean();
+  const tenantsById = new Map(tenants.map((tenant) => [String(tenant._id), tenant]));
+
+  return {
+    items: payments.map((payment) => {
+      const tenant = tenantsById.get(String(payment.tenantId)) || {};
+      return {
+        paymentId: payment._id,
+        gatewayPaymentId: payment.gatewayPaymentId || payment.externalId || "",
+        tenantId: payment.tenantId,
+        tenantName: tenant.name || "",
+        tenantSlug: tenant.slug || "",
+        plan: payment.plan,
+        amount: payment.amount || 0,
+        status: payment.status,
+        gateway: payment.gateway,
+        qrCode: payment.qrCode || "",
+        qrCodeBase64: payment.qrCodeBase64 || "",
+        copyPaste: payment.copyPaste || payment.qrCode || "",
+        expiresAt: payment.expiresAt || null,
+        paidAt: payment.paidAt || null,
+        createdAt: payment.createdAt || null,
+        updatedAt: payment.updatedAt || null
+      };
+    }),
+    page,
+    limit,
+    total,
+    totalPages: Math.ceil(total / limit) || 0
+  };
+}
+
+router.get("/admin/payments", auth, requireAdmin, async (req, res) => {
+  try {
+    const result = await listAdminPayments(req.query || {});
+    return res.json(result);
+  } catch (error) {
+    console.error("[SAAS PAYMENTS] erro", error.message);
+    return res.status(500).json({
+      ok: false,
+      message: "Erro ao listar pagamentos SaaS."
+    });
+  }
+});
 
 router.get("/admin/list", auth, requireAdmin, async (req, res) => {
   try {

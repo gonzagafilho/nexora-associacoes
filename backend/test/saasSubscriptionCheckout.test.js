@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 
 const SaasSubscriptionPayment = require("../src/models/SaasSubscriptionPayment");
 const TenantSubscription = require("../src/models/TenantSubscription");
+const Tenant = require("../src/models/Tenant");
 const User = require("../src/models/User");
 
 const tenantId = "507f1f77bcf86cd799439011";
@@ -16,7 +17,10 @@ const originals = {
   subscriptionFindOneAndUpdate: TenantSubscription.findOneAndUpdate,
   userFindOne: User.findOne,
   paymentFindOne: SaasSubscriptionPayment.findOne,
-  paymentCreate: SaasSubscriptionPayment.create
+  paymentFind: SaasSubscriptionPayment.find,
+  paymentCountDocuments: SaasSubscriptionPayment.countDocuments,
+  paymentCreate: SaasSubscriptionPayment.create,
+  tenantFind: Tenant.find
 };
 
 afterEach(() => {
@@ -26,7 +30,10 @@ afterEach(() => {
   TenantSubscription.findOneAndUpdate = originals.subscriptionFindOneAndUpdate;
   User.findOne = originals.userFindOne;
   SaasSubscriptionPayment.findOne = originals.paymentFindOne;
+  SaasSubscriptionPayment.find = originals.paymentFind;
+  SaasSubscriptionPayment.countDocuments = originals.paymentCountDocuments;
   SaasSubscriptionPayment.create = originals.paymentCreate;
+  Tenant.find = originals.tenantFind;
 });
 
 function authToken() {
@@ -267,4 +274,103 @@ test("webhook SaaS pending apenas atualiza pagamento sem ativar assinatura", asy
   assert.equal(paymentDoc.status, "pending");
   assert.equal(paymentDoc.saved, true);
   assert.equal(paymentDoc.paidAt, undefined);
+});
+
+
+test("GET /api/subscription/admin/payments lista pagamentos SaaS com tenant e filtros", async () => {
+  const paymentId = "507f1f77bcf86cd799439123";
+  const createdAt = new Date("2026-06-24T10:00:00.000Z");
+  const expiresAt = new Date("2026-06-24T10:30:00.000Z");
+  let countFilter;
+  let findFilter;
+  let sortArg;
+  let skipArg;
+  let limitArg;
+
+  Tenant.find = (query) => ({
+    select: () => ({
+      lean: async () => {
+        if (query.$or) {
+          assert.match(String(query.$or[0].name), /Central/i);
+          return [{ _id: tenantId }];
+        }
+
+        assert.deepEqual(query, { _id: { $in: [tenantId] } });
+        return [{ _id: tenantId, name: "Associação Central", slug: "central" }];
+      }
+    })
+  });
+
+  SaasSubscriptionPayment.countDocuments = async (filter) => {
+    countFilter = filter;
+    return 2;
+  };
+
+  SaasSubscriptionPayment.find = (filter) => {
+    findFilter = filter;
+    return {
+      sort(arg) { sortArg = arg; return this; },
+      skip(arg) { skipArg = arg; return this; },
+      limit(arg) { limitArg = arg; return this; },
+      async lean() {
+        return [{
+          _id: paymentId,
+          tenantId,
+          plan: "professional",
+          amount: 49.9,
+          status: "pending",
+          gateway: "mercadopago",
+          gatewayPaymentId: "123456789",
+          externalId: "123456789",
+          qrCode: "000201SAASPIX",
+          copyPaste: "000201SAASPIX",
+          qrCodeBase64: "base64-saas-pix",
+          expiresAt,
+          createdAt,
+          updatedAt: createdAt,
+          rawPayment: { access_token: "secret" }
+        }];
+      }
+    };
+  };
+
+  await withServer(async (baseUrl) => {
+    const response = await realFetch(`${baseUrl}/api/subscription/admin/payments?status=pending&q=Central&page=2&limit=1`, {
+      headers: { Authorization: `Bearer ${authToken()}` }
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.page, 2);
+    assert.equal(body.limit, 1);
+    assert.equal(body.total, 2);
+    assert.equal(body.totalPages, 2);
+    assert.equal(body.items.length, 1);
+    assert.deepEqual(body.items[0], {
+      paymentId,
+      gatewayPaymentId: "123456789",
+      tenantId,
+      tenantName: "Associação Central",
+      tenantSlug: "central",
+      plan: "professional",
+      amount: 49.9,
+      status: "pending",
+      gateway: "mercadopago",
+      qrCode: "000201SAASPIX",
+      qrCodeBase64: "base64-saas-pix",
+      copyPaste: "000201SAASPIX",
+      expiresAt: expiresAt.toISOString(),
+      paidAt: null,
+      createdAt: createdAt.toISOString(),
+      updatedAt: createdAt.toISOString()
+    });
+    assert.equal(Object.hasOwn(body.items[0], "rawPayment"), false);
+  });
+
+  assert.equal(countFilter.status, "pending");
+  assert.equal(findFilter.status, "pending");
+  assert.equal(findFilter.$or.some((entry) => entry.tenantId && entry.tenantId.$in), true);
+  assert.deepEqual(sortArg, { createdAt: -1 });
+  assert.equal(skipArg, 1);
+  assert.equal(limitArg, 1);
 });
