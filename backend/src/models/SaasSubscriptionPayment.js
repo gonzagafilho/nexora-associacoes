@@ -37,6 +37,13 @@ const schema = new mongoose.Schema(
       index: true
     },
 
+    source: {
+      type: String,
+      enum: ["checkout", "renewal", "manual"],
+      default: "checkout",
+      index: true
+    },
+
     externalId: String,
     gatewayPaymentId: String,
     externalReference: String,

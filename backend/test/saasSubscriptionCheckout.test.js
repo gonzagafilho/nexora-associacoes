@@ -20,7 +20,8 @@ const originals = {
   paymentFind: SaasSubscriptionPayment.find,
   paymentCountDocuments: SaasSubscriptionPayment.countDocuments,
   paymentCreate: SaasSubscriptionPayment.create,
-  tenantFind: Tenant.find
+  tenantFind: Tenant.find,
+  tenantFindById: Tenant.findById
 };
 
 afterEach(() => {
@@ -34,6 +35,7 @@ afterEach(() => {
   SaasSubscriptionPayment.countDocuments = originals.paymentCountDocuments;
   SaasSubscriptionPayment.create = originals.paymentCreate;
   Tenant.find = originals.tenantFind;
+  Tenant.findById = originals.tenantFindById;
 });
 
 function authToken() {
@@ -373,4 +375,118 @@ test("GET /api/subscription/admin/payments lista pagamentos SaaS com tenant e fi
   assert.deepEqual(sortArg, { createdAt: -1 });
   assert.equal(skipArg, 1);
   assert.equal(limitArg, 1);
+});
+
+
+test("POST /api/subscription/admin/:tenantId/generate-pix gera PIX manual SaaS", async () => {
+  process.env.MERCADOPAGO_ACCESS_TOKEN = "APP_USR-platform-token";
+
+  TenantSubscription.findOne = async (query) => {
+    assert.equal(String(query.tenantId), tenantId);
+    return { _id: "507f1f77bcf86cd799439099", tenantId, plan: "professional" };
+  };
+  SaasSubscriptionPayment.findOne = () => ({ lean: async () => null });
+  Tenant.findById = (id) => {
+    assert.equal(String(id), tenantId);
+    return { lean: async () => ({ _id: tenantId, email: "financeiro@nexora.test" }) };
+  };
+
+  let savedPayment;
+  SaasSubscriptionPayment.create = async (data) => {
+    savedPayment = { _id: "507f1f77bcf86cd799439124", ...data };
+    return savedPayment;
+  };
+
+  let mercadoPagoBody;
+  global.fetch = async (url, options) => {
+    assert.match(String(url), /api\.mercadopago\.com\/v1\/payments$/);
+    assert.equal(options.headers.Authorization, "Bearer APP_USR-platform-token");
+    mercadoPagoBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({
+        id: "mp-manual-1",
+        status: "pending",
+        point_of_interaction: {
+          transaction_data: {
+            qr_code: "000201MANUALPIX",
+            qr_code_base64: "base64-manual-pix",
+            ticket_url: "https://mercadopago.example/pix/mp-manual-1"
+          }
+        }
+      })
+    };
+  };
+
+  await withServer(async (baseUrl) => {
+    const response = await realFetch(`${baseUrl}/api/subscription/admin/${tenantId}/generate-pix`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken()}` }
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.reused, false);
+    assert.equal(body.paymentId, "507f1f77bcf86cd799439124");
+    assert.equal(body.gatewayPaymentId, "mp-manual-1");
+    assert.equal(body.amount, 49.9);
+    assert.equal(body.status, "pending");
+    assert.equal(body.qrCode, "000201MANUALPIX");
+    assert.equal(body.qrCodeBase64, "base64-manual-pix");
+    assert.equal(body.copyPaste, "000201MANUALPIX");
+    assert.ok(body.expiresAt);
+  });
+
+  assert.equal(mercadoPagoBody.transaction_amount, 49.9);
+  assert.equal(mercadoPagoBody.payment_method_id, "pix");
+  assert.equal(mercadoPagoBody.payer.email, "financeiro@nexora.test");
+  assert.match(mercadoPagoBody.notification_url, /\/api\/subscription\/webhooks\/mercadopago$/);
+  assert.equal(savedPayment.source, "manual");
+  assert.equal(savedPayment.gatewayPaymentId, "mp-manual-1");
+});
+
+test("POST /api/subscription/admin/:tenantId/generate-pix não duplica PIX pendente válido", async () => {
+  const pending = {
+    _id: "507f1f77bcf86cd799439125",
+    tenantId,
+    subscriptionId: "507f1f77bcf86cd799439099",
+    gatewayPaymentId: "mp-existing-manual",
+    amount: 49.9,
+    status: "pending",
+    qrCode: "000201EXISTINGPIX",
+    qrCodeBase64: "base64-existing-pix",
+    copyPaste: "000201EXISTINGPIX",
+    expiresAt: new Date("2026-06-24T12:00:00.000Z")
+  };
+
+  TenantSubscription.findOne = async () => ({ _id: pending.subscriptionId, tenantId });
+  SaasSubscriptionPayment.findOne = (query) => {
+    assert.equal(String(query.tenantId), tenantId);
+    assert.deepEqual(query.status, { $in: ["pending", "in_process"] });
+    assert.ok(query.expiresAt.$gt instanceof Date);
+    return { lean: async () => pending };
+  };
+  SaasSubscriptionPayment.create = async () => {
+    throw new Error("não deveria criar PIX duplicado");
+  };
+  global.fetch = async () => {
+    throw new Error("não deveria chamar Mercado Pago");
+  };
+
+  await withServer(async (baseUrl) => {
+    const response = await realFetch(`${baseUrl}/api/subscription/admin/${tenantId}/generate-pix`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken()}` }
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.reused, true);
+    assert.equal(body.paymentId, pending._id);
+    assert.equal(body.gatewayPaymentId, pending.gatewayPaymentId);
+    assert.equal(body.copyPaste, pending.copyPaste);
+  });
 });

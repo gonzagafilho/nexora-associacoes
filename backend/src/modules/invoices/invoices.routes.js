@@ -2,6 +2,11 @@ const express = require("express");
 const auth = require("../../middlewares/auth");
 const Invoice = require("../../models/Invoice");
 const Associate = require("../../models/Associate");
+const Tenant = require("../../models/Tenant");
+const TenantBranding = require("../../models/TenantBranding");
+const TenantBillingSettings = require("../../models/TenantBillingSettings");
+const InvoicePix = require("../../models/InvoicePix");
+const PaymentGatewayTransaction = require("../../models/PaymentGatewayTransaction");
 const {
   buildInvoicePayload,
   refreshInvoiceAmount
@@ -9,8 +14,115 @@ const {
 const {
   createBoletoForInvoice
 } = require("../../services/boleto/mercadoPagoBoletoService");
+const mercadoPagoPixService = require("../../services/pix/mercadoPagoPixService");
+const { generateInvoicePdf } = require("../../services/pdfService");
+
+async function createPdfForInvoice(invoice, tenantId) {
+  const [associate, tenant, branding, billingSettings, invoicePix, boletoTransaction] =
+    await Promise.all([
+      Associate.findOne({ _id: invoice.associateId, tenantId }),
+      Tenant.findById(tenantId),
+      TenantBranding.findOne({ tenantId }).lean(),
+      TenantBillingSettings.findOne({ tenantId }).lean(),
+      InvoicePix.findOne({ tenantId, invoiceId: invoice._id }).sort({ createdAt: -1 }).lean(),
+      PaymentGatewayTransaction.findOne({
+        tenantId,
+        invoiceId: invoice._id,
+        gateway: "mercadopago",
+        method: "boleto"
+      }).sort({ createdAt: -1 }).lean()
+    ]);
+
+  if (!associate || !tenant) {
+    const error = new Error("Dados da associação ou do associado não encontrados.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const pdf = await generateInvoicePdf({
+    invoice,
+    associate,
+    tenant,
+    branding: branding || {},
+    billingSettings: billingSettings || {},
+    invoicePix,
+    boletoTransaction
+  });
+
+  invoice.pdfUrl = pdf.relativePath;
+  await invoice.save();
+  return pdf;
+}
+
+function formatInvoicePix(result) {
+  if (!result) return null;
+  const invoicePix = result.invoicePix || null;
+  const transaction = result.transaction || result;
+  return {
+    gatewayPaymentId: invoicePix?.gatewayPaymentId || transaction.externalId || "",
+    qrCode: invoicePix?.qrCodeText || transaction.qrCode || "",
+    qrCodeBase64: transaction.qrCodeBase64 || "",
+    copyPaste: invoicePix?.pixCopyPaste || transaction.qrCode || "",
+    amount: invoicePix?.amount || transaction.amount || transaction.totalAmount || 0,
+    expiresAt: invoicePix?.expiresAt || transaction.expiresAt || null,
+    status: invoicePix?.status || transaction.status || ""
+  };
+}
 
 const router = express.Router();
+
+router.post("/admin/associates/:associateId/generate", auth, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const payload = await buildInvoicePayload({
+      tenantId,
+      associateId: req.params.associateId,
+      body: {
+        ...req.body,
+        type: req.body?.type || "manual",
+        metadata: {
+          ...(req.body?.metadata || {}),
+          source: "individual-admin",
+          reference: req.body?.reference || req.body?.description || "cobranca-individual",
+          generatedBy: req.user.id
+        }
+      }
+    });
+
+    payload.clientId = req.params.associateId;
+    payload.competence = req.body?.competence || `individual-${Date.now()}`;
+
+    const invoice = await Invoice.create(payload);
+    let pix = null;
+    let pdf = null;
+
+    if (req.body?.generatePix) {
+      pix = formatInvoicePix(await mercadoPagoPixService.createPixForInvoice(invoice._id, tenantId));
+    }
+
+    if (req.body?.generatePdf) {
+      pdf = await createPdfForInvoice(invoice, tenantId);
+    }
+
+    return res.status(201).json({
+      ok: true,
+      invoiceId: invoice._id,
+      associateId: invoice.associateId,
+      amount: invoice.amountCurrent,
+      dueDate: invoice.dueDate,
+      status: invoice.status,
+      pix,
+      pdfUrl: pdf?.relativePath || invoice.pdfUrl || null,
+      pdfDocumentId: pdf?.documentId || null
+    });
+  } catch (error) {
+    console.error("[invoice:individual:generate]", error.message);
+    return res.status(error.statusCode || 500).json({
+      ok: false,
+      message: error.message || "Erro ao gerar cobrança individual."
+    });
+  }
+});
 
 router.post("/", auth, async (req, res) => {
   try {

@@ -11,6 +11,7 @@ const router = express.Router();
 
 const PROFESSIONAL_PLAN = "professional";
 const PROFESSIONAL_AMOUNT = 49.9;
+const PAYMENT_EXPIRATION_MINUTES = 30;
 
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60 * 1000);
@@ -188,6 +189,107 @@ async function listAdminSubscriptions(query) {
   };
 }
 
+function formatSaasPixPayment(payment, reused = false) {
+  return {
+    reused,
+    paymentId: payment._id,
+    gatewayPaymentId: payment.gatewayPaymentId || payment.externalId || "",
+    amount: payment.amount || 0,
+    status: payment.status,
+    qrCode: payment.qrCode || "",
+    qrCodeBase64: payment.qrCodeBase64 || "",
+    copyPaste: payment.copyPaste || payment.qrCode || "",
+    expiresAt: payment.expiresAt || null
+  };
+}
+
+async function generateManualSaasPix(req, tenantId) {
+  const subscription = await TenantSubscription.findOne({ tenantId });
+  if (!subscription) {
+    const error = new Error("Assinatura SaaS não encontrada.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const now = new Date();
+  const existing = await SaasSubscriptionPayment.findOne({
+    tenantId,
+    subscriptionId: subscription._id,
+    gateway: "mercadopago",
+    method: "pix",
+    plan: PROFESSIONAL_PLAN,
+    status: { $in: ["pending", "in_process"] },
+    expiresAt: { $gt: now }
+  }).lean();
+
+  if (existing) return formatSaasPixPayment(existing, true);
+
+  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!accessToken) {
+    const error = new Error("Mercado Pago da plataforma não configurado.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const tenant = await Tenant.findById(tenantId).lean();
+  if (!tenant) {
+    const error = new Error("Associação não encontrada.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const externalReference = `nexora_saas_manual_${tenantId}_${Date.now()}`;
+  const expiresAt = addMinutes(now, PAYMENT_EXPIRATION_MINUTES);
+  const idempotencyKey = crypto
+    .createHash("sha256")
+    .update(externalReference)
+    .digest("hex");
+
+  const payment = await mercadoPagoRequest("/v1/payments", accessToken, {
+    method: "POST",
+    headers: { "X-Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({
+      transaction_amount: PROFESSIONAL_AMOUNT,
+      description: "NEXORA Gestão Inteligente - Cobrança manual Plano Professional",
+      payment_method_id: "pix",
+      external_reference: externalReference,
+      date_of_expiration: expiresAt.toISOString(),
+      notification_url: `${getBaseUrl(req)}/api/subscription/webhooks/mercadopago`,
+      payer: {
+        email: getPayerEmail(tenant)
+      }
+    })
+  });
+
+  const transactionData = payment.point_of_interaction?.transaction_data || {};
+  const qrCode = transactionData.qr_code || "";
+  const saved = await SaasSubscriptionPayment.create({
+    tenantId,
+    subscriptionId: subscription._id,
+    plan: PROFESSIONAL_PLAN,
+    gateway: "mercadopago",
+    method: "pix",
+    source: "manual",
+    externalId: String(payment.id),
+    gatewayPaymentId: String(payment.id),
+    externalReference,
+    status: payment.status || "pending",
+    amount: PROFESSIONAL_AMOUNT,
+    qrCode,
+    copyPaste: qrCode,
+    qrCodeBase64: transactionData.qr_code_base64 || "",
+    ticketUrl: transactionData.ticket_url,
+    expiresAt,
+    rawCreateResponse: payment,
+    rawResponse: payment,
+    rawPayment: payment,
+    rawLastStatusResponse: payment,
+    lastCheckedAt: now
+  });
+
+  return formatSaasPixPayment(saved, false);
+}
+
 async function listAdminPayments(query) {
   const page = toPositiveInt(query.page, 1, 10000);
   const limit = toPositiveInt(query.limit, 20, 100);
@@ -235,6 +337,24 @@ async function listAdminPayments(query) {
     totalPages: Math.ceil(total / limit) || 0
   };
 }
+
+router.post("/admin/:tenantId/generate-pix", auth, requireAdmin, async (req, res) => {
+  try {
+    const tenantId = normalizeObjectId(req.params.tenantId);
+    if (!tenantId) {
+      return res.status(400).json({ ok: false, message: "tenantId inválido." });
+    }
+
+    const result = await generateManualSaasPix(req, tenantId);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error("[SAAS MANUAL PIX] erro", error.message);
+    return res.status(error.statusCode || 500).json({
+      ok: false,
+      message: error.statusCode ? error.message : "Erro ao gerar PIX manual SaaS."
+    });
+  }
+});
 
 router.get("/admin/payments", auth, requireAdmin, async (req, res) => {
   try {
@@ -367,6 +487,7 @@ router.post("/checkout", auth, async (req, res) => {
       plan: PROFESSIONAL_PLAN,
       gateway: "mercadopago",
       method: "pix",
+      source: "checkout",
       externalId: String(payment.id),
       gatewayPaymentId: String(payment.id),
       externalReference,

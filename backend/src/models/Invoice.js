@@ -4,6 +4,8 @@ const invoiceSchema = new mongoose.Schema(
   {
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true },
     associateId: { type: mongoose.Schema.Types.ObjectId, ref: "Associate", required: true },
+    clientId: { type: mongoose.Schema.Types.ObjectId, ref: "Associate" },
+    competence: { type: String, trim: true },
     type: {
       type: String,
       enum: ["monthly", "extra", "agreement", "event", "manual", "maintenance", "club_entry", "uniform"],
