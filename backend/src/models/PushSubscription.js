@@ -5,7 +5,13 @@ const pushSubscriptionSchema = new mongoose.Schema(
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     endpoint: { type: String, required: true, trim: true },
-    createdAt: { type: Date, default: Date.now }
+    keys: {
+      p256dh: { type: String, required: true, trim: true },
+      auth: { type: String, required: true, trim: true }
+    },
+    userAgent: { type: String, trim: true, default: "" },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
   },
   { versionKey: false }
 );

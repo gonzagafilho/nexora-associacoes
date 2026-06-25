@@ -58,3 +58,45 @@ self.addEventListener("fetch", (event) => {
     }))
   );
 });
+
+function parsePushPayload(event) {
+  if (!event.data) return {};
+  try {
+    return event.data.json();
+  } catch (_error) {
+    return { body: event.data.text() };
+  }
+}
+
+self.addEventListener("push", (event) => {
+  const payload = parsePushPayload(event);
+  const title = payload.title || "NEXORA Gestão";
+  const options = {
+    body: payload.body || "Nova notificação disponível.",
+    icon: payload.icon || "/icons/icon-192.png",
+    badge: payload.badge || "/icons/icon-maskable.png",
+    data: {
+      url: payload.url || "/#notificacoes",
+      notificationId: payload.notificationId || "",
+      module: payload.module || "",
+      severity: payload.severity || "low"
+    }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || "/#notificacoes", self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      const sameOrigin = new URL(client.url).origin === self.location.origin;
+      if (!sameOrigin) continue;
+      await client.focus();
+      if ("navigate" in client) return client.navigate(targetUrl);
+      return;
+    }
+    return clients.openWindow(targetUrl);
+  })());
+});

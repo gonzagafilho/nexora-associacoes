@@ -22,7 +22,8 @@ const state = {
     unread: 0,
     items: [],
     loading: false,
-    summary: { critical: 0, today: 0, week: 0, smartAlertsToday: 0 }
+    summary: { critical: 0, today: 0, week: 0, smartAlertsToday: 0 },
+    push: { status: "unknown", enabled: false, active: false, supported: true, publicKey: null }
   },
   pwa: { installPrompt: null, canInstall: false },
   businessType: localStorage.getItem("nexora_business_type") || "association",
@@ -528,9 +529,87 @@ function notificationSeverityChip(severity = "low") {
 function notificationCard(item = {}) {
   return `<article style="padding:12px;border:1px solid var(--line);border-radius:12px;background:${item.isRead ? '#0b1220' : '#111827'}"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><div style="font-weight:800">${escapeHtml(item.title || 'Notificação')}</div><div style="color:var(--muted);font-size:12px;margin-top:4px">${escapeHtml(item.message || '')}</div></div>${notificationSeverityChip(item.severity)}</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px"><small style="color:var(--muted)">${dateTime(item.createdAt)} • ${escapeHtml(notificationModuleLabel(item.module))}</small><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-read-notification="${item.id}">${item.isRead ? 'Lida' : 'Marcar lida'}</button><button class="button button-danger button-sm" data-delete-notification="${item.id}">Excluir</button></div></div></article>`;
 }
+function pushSupported() {
+  return Boolean("serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
+}
+function pushStatusLabel() {
+  const push = state.notifications.push || {};
+  if (!push.supported) return "Não suportadas";
+  if (push.status === "blocked" || Notification.permission === "denied") return "Bloqueadas";
+  if (!push.enabled) return "Indisponíveis";
+  if (push.active) return "Ativadas";
+  return "Desativadas";
+}
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+}
+async function refreshPushStatus({ render = false } = {}) {
+  state.notifications.push.supported = pushSupported();
+  if (!state.notifications.push.supported) {
+    state.notifications.push = { ...state.notifications.push, status: "unsupported", enabled: false, active: false, publicKey: null };
+    if (render) renderNotificationsPanel();
+    return state.notifications.push;
+  }
+  try {
+    const result = await api("/api/push/status");
+    state.notifications.push = {
+      supported: true,
+      status: Notification.permission === "denied" ? "blocked" : (result.active ? "active" : "inactive"),
+      enabled: Boolean(result.enabled),
+      active: Boolean(result.active),
+      publicKey: result.publicKey || null
+    };
+  } catch (_error) {
+    state.notifications.push = { ...state.notifications.push, supported: true, status: "unavailable", enabled: false, active: false, publicKey: null };
+  }
+  if (render) renderNotificationsPanel();
+  return state.notifications.push;
+}
+async function currentBrowserPushSubscription() {
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+async function enablePushNotifications() {
+  if (!pushSupported()) { toast("Notificações não suportadas neste navegador.", true); await refreshPushStatus({ render: true }); return; }
+  const status = await refreshPushStatus();
+  if (!status.enabled || !status.publicKey) { toast("Push ainda não configurado no servidor.", true); renderNotificationsPanel(); return; }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") { await refreshPushStatus({ render: true }); toast("Permissão de notificações bloqueada.", true); return; }
+  const registration = await navigator.serviceWorker.ready;
+  const existing = await registration.pushManager.getSubscription();
+  const subscription = existing || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(status.publicKey) });
+  await api("/api/push/subscribe", { method: "POST", body: JSON.stringify({ ...subscription.toJSON(), userAgent: navigator.userAgent }) });
+  toast("Notificações push ativadas.");
+  await refreshPushStatus({ render: true });
+}
+async function disablePushNotifications() {
+  if (pushSupported()) {
+    const subscription = await currentBrowserPushSubscription().catch(() => null);
+    if (subscription) await subscription.unsubscribe().catch(() => null);
+    await api("/api/push/unsubscribe", { method: "DELETE", body: JSON.stringify({ endpoint: subscription?.endpoint || "" }) });
+  } else {
+    await api("/api/push/unsubscribe", { method: "DELETE", body: JSON.stringify({}) });
+  }
+  toast("Notificações push desativadas.");
+  await refreshPushStatus({ render: true });
+}
+async function sendTestPushNotification() {
+  const result = await api("/api/push/test", { method: "POST", body: JSON.stringify({ title: "Teste NEXORA", message: "Push funcionando no PWA" }) });
+  toast(result.push?.enabled === false ? "Teste registrado, mas VAPID está desativado." : "Push de teste enviado.");
+}
+function pushControlsHtml() {
+  const push = state.notifications.push || {};
+  const label = pushStatusLabel();
+  const canActivate = push.supported && push.enabled && !push.active && Notification.permission !== "denied";
+  const canDeactivate = push.supported && push.active;
+  return '<div class="card" style="padding:12px;background:#0b1220"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center"><div><small style="color:var(--muted)">Push no celular</small><div style="font-weight:850">' + label + '</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">' + (canActivate ? '<button class="button button-primary button-sm" data-enable-push>Ativar notificações no celular</button>' : '') + (canDeactivate ? '<button class="button button-secondary button-sm" data-disable-push>Desativar notificações</button><button class="button button-ghost button-sm" data-test-push>Enviar teste</button>' : '') + '</div></div></div>';
+}
 function notificationsPanelHtml() {
   const summary = state.notifications.summary || { critical: 0, today: 0, week: 0, smartAlertsToday: 0 };
-  return `<aside data-notifications-panel style="position:fixed;top:0;right:0;height:100vh;width:min(430px,92vw);z-index:180;background:#0b1220;border-left:1px solid var(--line);box-shadow:-18px 0 60px #0009;transform:${state.notifications.open ? 'translateX(0)' : 'translateX(105%)'};transition:transform .25s ease;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center"><div><h3 style="margin:0">Notificações</h3><small style="color:var(--muted)">${state.notifications.unread} não lida(s)</small></div><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-all-notifications>Marcar todas</button><button class="button button-ghost button-sm" data-close-notifications>Fechar</button></div></header><section style="padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:8px"><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><div class="card" style="padding:10px"><small style="color:var(--muted)">Críticas</small><div style="font-weight:800">${Number(summary.critical || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Hoje</small><div style="font-weight:800">${Number(summary.today || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Semana</small><div style="font-weight:800">${Number(summary.week || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Alertas inteligentes hoje</small><div style="font-weight:800">${Number(summary.smartAlertsToday || 0)}</div></div></div><button class="button button-primary button-sm" data-run-smart-alerts>Verificar alertas agora</button></section><section style="padding:14px;overflow:auto;display:grid;gap:10px" data-notifications-list>${state.notifications.loading ? '<div class="card empty">Carregando notificações...</div>' : (state.notifications.items.length ? state.notifications.items.map((item) => notificationCard(item)).join('') : '<div class="card empty">Sem notificações no momento.</div>')}</section></aside><div data-notifications-overlay style="position:fixed;inset:0;background:#020617aa;z-index:170;display:${state.notifications.open ? 'block' : 'none'}"></div>`;
+  return `<aside data-notifications-panel style="position:fixed;top:0;right:0;height:100vh;width:min(430px,92vw);z-index:180;background:#0b1220;border-left:1px solid var(--line);box-shadow:-18px 0 60px #0009;transform:${state.notifications.open ? 'translateX(0)' : 'translateX(105%)'};transition:transform .25s ease;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center"><div><h3 style="margin:0">Notificações</h3><small style="color:var(--muted)">${state.notifications.unread} não lida(s)</small></div><div style="display:flex;gap:6px"><button class="button button-secondary button-sm" data-mark-all-notifications>Marcar todas</button><button class="button button-ghost button-sm" data-close-notifications>Fechar</button></div></header><section style="padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:8px"><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><div class="card" style="padding:10px"><small style="color:var(--muted)">Críticas</small><div style="font-weight:800">${Number(summary.critical || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Hoje</small><div style="font-weight:800">${Number(summary.today || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Semana</small><div style="font-weight:800">${Number(summary.week || 0)}</div></div><div class="card" style="padding:10px"><small style="color:var(--muted)">Alertas inteligentes hoje</small><div style="font-weight:800">${Number(summary.smartAlertsToday || 0)}</div></div></div><button class="button button-primary button-sm" data-run-smart-alerts>Verificar alertas agora</button>${pushControlsHtml()}</section><section style="padding:14px;overflow:auto;display:grid;gap:10px" data-notifications-list>${state.notifications.loading ? '<div class="card empty">Carregando notificações...</div>' : (state.notifications.items.length ? state.notifications.items.map((item) => notificationCard(item)).join('') : '<div class="card empty">Sem notificações no momento.</div>')}</section></aside><div data-notifications-overlay style="position:fixed;inset:0;background:#020617aa;z-index:170;display:${state.notifications.open ? 'block' : 'none'}"></div>`;
 }
 async function refreshNotifications() {
   state.notifications.loading = true;
@@ -577,13 +656,16 @@ function bindNotificationsPanel() {
   app.querySelector('[data-open-notifications]')?.addEventListener('click', async () => {
     state.notifications.open = !state.notifications.open;
     renderNotificationsPanel();
-    if (state.notifications.open) await refreshNotifications();
+    if (state.notifications.open) { await refreshPushStatus(); await refreshNotifications(); }
   });
   app.querySelector('[data-mark-all-notifications]')?.addEventListener('click', async () => {
     await api('/api/notifications/read-all', { method: 'POST' });
     toast('Notificações marcadas como lidas.');
     await refreshNotifications();
   });
+  app.querySelector('[data-enable-push]')?.addEventListener('click', enablePushNotifications);
+  app.querySelector('[data-disable-push]')?.addEventListener('click', disablePushNotifications);
+  app.querySelector('[data-test-push]')?.addEventListener('click', sendTestPushNotification);
   app.querySelector('[data-run-smart-alerts]')?.addEventListener('click', async () => {
     const result = await api('/api/notifications/run-smart-alerts', { method: 'POST' });
     toast(`Alertas verificados. Criadas: ${Number(result.created || 0)} | Ignoradas: ${Number(result.skipped || 0)} | Erros: ${Number(result.errors || 0)}`);

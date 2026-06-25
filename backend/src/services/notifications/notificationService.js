@@ -10,6 +10,7 @@ const FinancialTransaction = require("../../models/FinancialTransaction");
 const TenantSubscription = require("../../models/TenantSubscription");
 const SaasSubscriptionPayment = require("../../models/SaasSubscriptionPayment");
 const { SMART_ALERT_REFERENCE_TYPES } = require("./smartAlertTypes");
+const { sendPushForNotification, markNotificationPushDelivery } = require("../push/pushNotificationService");
 
 const FUTURE_CHANNELS = Object.freeze({
   email: { enabled: false },
@@ -48,9 +49,20 @@ function deliveryDefaults() {
   return {
     email: FUTURE_CHANNELS.email.enabled ? "pending" : "disabled",
     whatsapp: FUTURE_CHANNELS.whatsapp.enabled ? "pending" : "disabled",
-    push: FUTURE_CHANNELS.push.enabled ? "pending" : "disabled",
-    mobile: FUTURE_CHANNELS.mobile.enabled ? "pending" : "disabled"
+    push: "pending",
+    mobile: "pending"
   };
+}
+
+async function trySendPush(notification) {
+  try {
+    const result = await sendPushForNotification(notification);
+    if (result?.enabled === false) return;
+    const sent = Number(result?.sent || 0) > 0;
+    await markNotificationPushDelivery(notification._id || notification.id, sent ? "sent" : "disabled");
+  } catch (error) {
+    console.warn("[notifications] push ignorado", error?.message || error);
+  }
 }
 
 async function resolveAudienceUserIds({ tenantId, userId, actorUserId, audienceUserIds, allowWhenDisconnected = false }) {
@@ -126,6 +138,7 @@ async function createNotification(options = {}) {
 
   try {
     const created = await Notification.insertMany(docs, { ordered: false });
+    await Promise.all(created.map((notification) => trySendPush(notification)));
     return created.map(serialize);
   } catch (error) {
     if (error?.writeErrors?.length && error.writeErrors.every((item) => item.code === 11000)) return [];

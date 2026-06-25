@@ -19,6 +19,7 @@ const projectRoutes = require("./modules/projects/projects.routes");
 const assetRoutes = require("./modules/assets/assets.routes");
 const protocolRoutes = require("./modules/protocols/protocols.routes");
 const notificationRoutes = require("./modules/notifications/notifications.routes");
+const pushRoutes = require("./modules/push/push.routes");
 
 const app = express();
 
@@ -51,6 +52,7 @@ app.use("/api/projects", projectRoutes);
 app.use("/api/assets", assetRoutes);
 app.use("/api/protocols", protocolRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/push", pushRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",
   pixRoutes.mercadoPagoWebhook
