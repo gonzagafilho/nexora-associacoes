@@ -5,6 +5,7 @@ const auth = require("../../middlewares/auth");
 const requireModule = require("../../middlewares/requireModule");
 const FinancialTransaction = require("../../models/FinancialTransaction");
 const Project = require("../../models/Project");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 const { syncProjectSpent } = require("../../services/projects/projectService");
 
 const router = express.Router();
@@ -14,6 +15,25 @@ const TYPES = new Set(["income", "expense"]);
 const STATUSES = new Set(["pending", "paid", "cancelled", "overdue"]);
 const PAYMENT_METHODS = new Set(["pix", "cash", "bank_transfer", "card", "boleto", "other"]);
 const REFERENCE_TYPES = new Set(["invoice", "manual", "supplier", "adjustment"]);
+
+async function publishFinancialEvent(req, eventName, transaction, action) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "financial",
+      action,
+      entityId: transaction?._id,
+      entityType: "FinancialTransaction",
+      payload: {
+        type: transaction?.type,
+        category: transaction?.category,
+        status: transaction?.status,
+        amount: Number(transaction?.amount || 0)
+      }
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
+}
 
 function toPositiveInt(value, fallback, max = 100) {
   const parsed = Number.parseInt(value, 10);
@@ -256,6 +276,7 @@ router.post("/transactions", financialAccess, async (req, res) => {
     payload.createdBy = req.user.id;
     const transaction = await FinancialTransaction.create(payload);
     await syncAffectedProjects(req.user.tenantId, payload.projectId);
+    await publishFinancialEvent(req, "financial.transaction.created", transaction, "created");
     return res.status(201).json({ ok: true, transaction: serialize(transaction) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao criar transação." });
@@ -289,6 +310,7 @@ router.post("/transactions/:id/pay", financialAccess, async (req, res) => {
   if (req.body?.paymentMethod && PAYMENT_METHODS.has(req.body.paymentMethod)) transaction.paymentMethod = req.body.paymentMethod;
   await transaction.save();
   await syncAffectedProjects(req.user.tenantId, transaction.projectId);
+  await publishFinancialEvent(req, "financial.transaction.paid", transaction, "paid");
   return res.json({ ok: true, transaction: serialize(transaction) });
 });
 
@@ -298,6 +320,7 @@ router.post("/transactions/:id/cancel", financialAccess, async (req, res) => {
   transaction.status = "cancelled";
   await transaction.save();
   await syncAffectedProjects(req.user.tenantId, transaction.projectId);
+  await publishFinancialEvent(req, "financial.transaction.cancelled", transaction, "cancelled");
   return res.json({ ok: true, transaction: serialize(transaction) });
 });
 

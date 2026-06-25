@@ -12,6 +12,7 @@ const {
   calculateTenantSubscription,
   roundMoney
 } = require("../../services/subscription/subscriptionPricingService");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 
 const router = express.Router();
 
@@ -47,6 +48,20 @@ function requireAdmin(req, res, next) {
 
 function addDays(date, days) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+async function publishSubscriptionEvent(req, eventName, payload) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "saas",
+      action: payload.action,
+      entityId: payload.entityId,
+      entityType: payload.entityType,
+      payload: payload.data || {}
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
 }
 
 async function calculateSubscriptionDashboard(now = new Date()) {
@@ -607,6 +622,17 @@ router.post("/checkout", auth, async (req, res) => {
     }).lean();
 
     if (existing) {
+      await publishSubscriptionEvent(req, "subscription.checkout_created", {
+        action: "checkout_reused",
+        entityId: existing._id,
+        entityType: "SaasSubscriptionPayment",
+        data: {
+          status: existing.status,
+          amount: Number(existing.amount || 0),
+          source: existing.source || "checkout",
+          reused: true
+        }
+      });
       await auditSaas(req, {
         action: "saas_checkout",
         status: "reused",
@@ -682,6 +708,18 @@ router.post("/checkout", auth, async (req, res) => {
       rawPayment: payment,
       rawLastStatusResponse: payment,
       lastCheckedAt: new Date()
+    });
+
+    await publishSubscriptionEvent(req, "subscription.checkout_created", {
+      action: "checkout_created",
+      entityId: saved._id,
+      entityType: "SaasSubscriptionPayment",
+      data: {
+        status: saved.status,
+        amount: Number(saved.amount || 0),
+        source: "checkout",
+        reused: false
+      }
     });
 
     await auditSaas(req, {
@@ -796,6 +834,20 @@ async function syncSaasPaymentFromMercadoPago(paymentId, webhookPayload = null) 
   subscriptionPayment.paidAt = subscriptionPayment.paidAt || paidAt;
   subscriptionPayment.amount = Number(payment.transaction_amount ?? subscriptionPayment.amount ?? 0);
   await subscriptionPayment.save();
+
+  await publishOsEvent("subscription.payment_approved", {
+    tenantId: subscriptionPayment.tenantId,
+    userId: null,
+    module: "saas",
+    action: "payment_approved",
+    entityId: subscriptionPayment._id,
+    entityType: "SaasSubscriptionPayment",
+    payload: {
+      gatewayPaymentId: subscriptionPayment.gatewayPaymentId || subscriptionPayment.externalId || String(paymentId),
+      amount: Number(subscriptionPayment.amount || 0),
+      status: subscriptionPayment.status
+    }
+  }, { tenantId: subscriptionPayment.tenantId, userId: null });
 
   if (wasAlreadyPaid) {
     return {

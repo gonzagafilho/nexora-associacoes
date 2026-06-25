@@ -7,6 +7,7 @@ const Asset = require("../src/models/Asset");
 const FinancialTransaction = require("../src/models/FinancialTransaction");
 const Invoice = require("../src/models/Invoice");
 const Notification = require("../src/models/Notification");
+const OsEventLog = require("../src/models/OsEventLog");
 const Project = require("../src/models/Project");
 const Protocol = require("../src/models/Protocol");
 const Tenant = require("../src/models/Tenant");
@@ -24,6 +25,8 @@ const originals = {
   invoiceAggregate: Invoice.aggregate,
   invoiceFind: Invoice.find,
   notificationCountDocuments: Notification.countDocuments,
+  osEventLogCountDocuments: OsEventLog.countDocuments,
+  osEventLogAggregate: OsEventLog.aggregate,
   projectCountDocuments: Project.countDocuments,
   projectFind: Project.find,
   protocolCountDocuments: Protocol.countDocuments,
@@ -39,6 +42,8 @@ afterEach(() => {
   Invoice.aggregate = originals.invoiceAggregate;
   Invoice.find = originals.invoiceFind;
   Notification.countDocuments = originals.notificationCountDocuments;
+  OsEventLog.countDocuments = originals.osEventLogCountDocuments;
+  OsEventLog.aggregate = originals.osEventLogAggregate;
   Project.countDocuments = originals.projectCountDocuments;
   Project.find = originals.projectFind;
   Protocol.countDocuments = originals.protocolCountDocuments;
@@ -46,6 +51,7 @@ afterEach(() => {
   delete require.cache[require.resolve("../src/services/intelligence/executiveService")];
   delete require.cache[require.resolve("../src/services/intelligence/aiAssistantService")];
   delete require.cache[require.resolve("../src/services/system/osService")];
+  delete require.cache[require.resolve("../src/services/system/osEventLogService")];
   delete require.cache[require.resolve("../src/os/kernel")];
   delete require.cache[require.resolve("../src/os/driverRegistry")];
   delete require.cache[require.resolve("../src/os/eventBus")];
@@ -155,6 +161,23 @@ function stubExecutiveModels(expectedTenantId = tenantId, expectedUserId = userI
     return findChain([{ _id: "507f1f77bcf86cd799439091", tenantId: expectedTenantId, description: "Mensalidade", amountCurrent: 80, status: "overdue" }]);
   };
   return filters;
+}
+
+function stubOsEventsDashboard(expectedTenantId = tenantId) {
+  OsEventLog.countDocuments = async (filter) => {
+    assert.equal(String(filter.tenantId), expectedTenantId);
+    if (filter.failed?.$gt === 0) return 1;
+    if (filter.occurredAt?.$gte) return 4;
+    return 10;
+  };
+  OsEventLog.aggregate = async (pipeline) => {
+    const match = pipeline[0]?.$match || {};
+    assert.equal(String(match.tenantId), expectedTenantId);
+    if (pipeline[1]?.$group?._id === "$module") {
+      return [{ _id: "projects", total: 5 }, { _id: "financial", total: 3 }];
+    }
+    return [{ _id: "project.created", total: 5 }, { _id: "financial.transaction.created", total: 3 }];
+  };
 }
 
 function stubSystemOsTenant(enabledModules = ["financial", "projects", "protocols"]) {
@@ -367,5 +390,41 @@ test("POST /api/ai/chat responde o que é o kernel do NEXORA OS", async () => {
     assert.equal(response.status, 200);
     assert.equal(body.intent, "nexora_kernel");
     assert.equal(body.answer, "O Kernel do NEXORA OS é o núcleo técnico da plataforma. Ele conecta eventos, permissões, auditoria, notificações, automações, workflows, drivers e a NEXORA IA, permitindo que os módulos trabalhem juntos com segurança.");
+  });
+});
+
+test("POST /api/ai/chat responde o que é o Event Engine", async () => {
+  stubExecutiveModels();
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + authToken() },
+      body: JSON.stringify({ question: "o que é o event engine?" })
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.intent, "event_engine");
+    assert.equal(body.answer, "O Event Engine do NEXORA OS é o barramento interno que registra e distribui eventos entre os módulos da plataforma, permitindo automações, auditoria, notificações e integrações sem acoplamento direto entre os módulos.");
+  });
+});
+
+test("POST /api/ai/chat responde eventos de hoje", async () => {
+  stubExecutiveModels();
+  stubOsEventsDashboard();
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(baseUrl + "/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + authToken() },
+      body: JSON.stringify({ question: "quais eventos aconteceram hoje?" })
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.intent, "events_today");
+    assert.equal(body.data.todayEvents, 4);
+    assert.match(body.answer, /Hoje foram registrados 4 evento\(s\)/i);
   });
 });

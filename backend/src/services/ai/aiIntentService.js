@@ -54,6 +54,8 @@ function identifyIntent(question = "") {
   if (byRegex(text, /consultar obras/)) return { intent: "delayed_projects", type: "query", module: "Obras", action: null, requiresConfirmation: false, critical: false };
   if (byRegex(text, /consultar protocolos/)) return { intent: "open_protocols", type: "query", module: "Protocolos", action: null, requiresConfirmation: false, critical: false };
   if (byRegex(text, /gerar prestacao de contas/)) return { intent: "financial_overview", type: "query", module: "Relatórios", action: null, requiresConfirmation: false, critical: false };
+  if (byRegex(text, /event engine/)) return { intent: "event_engine", type: "query", module: "NEXORA OS", action: null, requiresConfirmation: false, critical: false };
+  if (byRegex(text, /eventos.*hoje|hoje.*eventos/)) return { intent: "events_today", type: "query", module: "NEXORA OS", action: null, requiresConfirmation: false, critical: false };
 
   return { intent: "unknown", type: "unknown", module: "NEXORA IA", action: null, requiresConfirmation: false, critical: false };
 }

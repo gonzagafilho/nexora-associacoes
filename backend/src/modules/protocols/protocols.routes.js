@@ -7,6 +7,7 @@ const ProtocolHistory = require("../../models/ProtocolHistory");
 const Project = require("../../models/Project");
 const Asset = require("../../models/Asset");
 const Associate = require("../../models/Associate");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 const {
   PROTOCOL_TYPES,
   PROTOCOL_PRIORITIES,
@@ -20,6 +21,26 @@ const PRIORITY_SET = new Set(PROTOCOL_PRIORITIES);
 const STATUS_SET = new Set(PROTOCOL_STATUSES);
 const CLOSED_STATUSES = new Set(["resolved", "closed", "cancelled"]);
 const PRIORITY_WEIGHT = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+async function publishProtocolEvent(req, eventName, protocol, action, extraPayload = {}) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "protocols",
+      action,
+      entityId: protocol?._id,
+      entityType: "Protocol",
+      payload: {
+        protocolNumber: protocol?.protocolNumber,
+        title: protocol?.title,
+        status: protocol?.status,
+        priority: protocol?.priority,
+        ...extraPayload
+      }
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
+}
 
 function escapeRegExp(value) {
   return String(value).replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
@@ -378,6 +399,7 @@ router.post("/", protocolAccess, async (req, res) => {
       .populate("relatedAssetId", "name assetCode")
       .populate("relatedAssociateId", "name");
     const responseProtocol = applyResponseLinks(populated, { project, asset, associate });
+    await publishProtocolEvent(req, "protocol.created", responseProtocol || protocol, "created");
     return res.status(201).json({ ok: true, protocol: serializeProtocol(responseProtocol) });
   } catch (error) {
     if (error?.code === 11000) {
@@ -416,6 +438,10 @@ router.put("/:id", protocolAccess, async (req, res) => {
       message: req.body?.historyMessage || req.body?.notes || payload.notes,
       req
     });
+    await publishProtocolEvent(req, "protocol.updated", protocol, "updated");
+    if (previousStatus !== protocol.status) {
+      await publishProtocolEvent(req, "protocol.status_changed", protocol, "status_changed", { oldStatus: previousStatus, newStatus: protocol.status });
+    }
     return res.json({ ok: true, protocol: serializeProtocol(protocol) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao atualizar protocolo." });
@@ -440,6 +466,7 @@ router.post("/:id/status", protocolAccess, async (req, res) => {
     }
     await protocol.save();
     await logHistory({ protocolId: protocol._id, tenantId: req.user.tenantId, action: "mudanca_status", oldStatus, newStatus, message: req.body?.message || req.body?.notes, req });
+    await publishProtocolEvent(req, "protocol.status_changed", protocol, "status_changed", { oldStatus, newStatus });
     return res.json({ ok: true, protocol: serializeProtocol(protocol) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao mudar status do protocolo." });
@@ -455,6 +482,7 @@ router.post("/:id/resolve", protocolAccess, async (req, res) => {
     protocol.resolvedAt = new Date();
     await protocol.save();
     await logHistory({ protocolId: protocol._id, tenantId: req.user.tenantId, action: "resolucao", oldStatus, newStatus: "resolved", message: req.body?.message || req.body?.notes, req });
+    await publishProtocolEvent(req, "protocol.resolved", protocol, "resolved", { oldStatus, newStatus: "resolved" });
     return res.json({ ok: true, protocol: serializeProtocol(protocol) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao resolver protocolo." });
@@ -471,6 +499,7 @@ router.post("/:id/close", protocolAccess, async (req, res) => {
     protocol.closedAt = new Date();
     await protocol.save();
     await logHistory({ protocolId: protocol._id, tenantId: req.user.tenantId, action: "fechamento", oldStatus, newStatus: "closed", message: req.body?.message || req.body?.notes, req });
+    await publishProtocolEvent(req, "protocol.closed", protocol, "closed", { oldStatus, newStatus: "closed" });
     return res.json({ ok: true, protocol: serializeProtocol(protocol) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao fechar protocolo." });
@@ -486,6 +515,7 @@ router.post("/:id/cancel", protocolAccess, async (req, res) => {
     protocol.closedAt = new Date();
     await protocol.save();
     await logHistory({ protocolId: protocol._id, tenantId: req.user.tenantId, action: "cancelamento", oldStatus, newStatus: "cancelled", message: req.body?.message || req.body?.notes, req });
+    await publishProtocolEvent(req, "protocol.cancelled", protocol, "cancelled", { oldStatus, newStatus: "cancelled" });
     return res.json({ ok: true, protocol: serializeProtocol(protocol) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao cancelar protocolo." });

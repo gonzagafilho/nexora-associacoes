@@ -4,6 +4,7 @@ const auth = require("../../middlewares/auth");
 const requireModule = require("../../middlewares/requireModule");
 const Project = require("../../models/Project");
 const FinancialTransaction = require("../../models/FinancialTransaction");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 const {
   buildProjectPayload,
   calculateBudgetTotals,
@@ -15,6 +16,25 @@ const {
 
 const router = express.Router();
 const projectsAccess = [auth, requireModule("projects")];
+
+async function publishProjectEvent(req, eventName, project, action) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "projects",
+      action,
+      entityId: project?._id,
+      entityType: "Project",
+      payload: {
+        name: project?.name,
+        status: project?.status,
+        type: project?.type,
+        budget: Number(project?.budget || 0)
+      }
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
+}
 
 function buildQuery(req) {
   const query = { tenantId: req.user.tenantId };
@@ -174,6 +194,7 @@ router.post("/", projectsAccess, async (req, res) => {
     payload.tenantId = req.user.tenantId;
     payload.createdBy = req.user.id;
     const project = await Project.create(payload);
+    await publishProjectEvent(req, "project.created", project, "created");
     return res.status(201).json({ ok: true, project: serializeProject(project) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao criar projeto." });
@@ -187,6 +208,7 @@ router.put("/:id", projectsAccess, async (req, res) => {
     const payload = buildProjectPayload(req.body || {}, project);
     Object.assign(project, payload);
     await project.save();
+    await publishProjectEvent(req, "project.updated", project, "updated");
     return res.json({ ok: true, project: serializeProject(project) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao atualizar projeto." });
@@ -220,6 +242,7 @@ router.post("/:id/complete", projectsAccess, async (req, res) => {
   project.status = "completed";
   if (!project.endDate) project.endDate = new Date();
   await project.save();
+  await publishProjectEvent(req, "project.completed", project, "completed");
   return res.json({ ok: true, project: serializeProject(project) });
 });
 
@@ -228,6 +251,7 @@ router.post("/:id/cancel", projectsAccess, async (req, res) => {
   if (!project) return;
   project.status = "cancelled";
   await project.save();
+  await publishProjectEvent(req, "project.cancelled", project, "cancelled");
   return res.json({ ok: true, project: serializeProject(project) });
 });
 

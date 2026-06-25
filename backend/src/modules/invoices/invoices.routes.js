@@ -19,6 +19,27 @@ const mercadoPagoPixService = require("../../services/pix/mercadoPagoPixService"
 const { generateInvoicePdf } = require("../../services/pdfService");
 const { createBillingAuditLog } = require("../../services/audit/billingAuditService");
 const { createIncomeForPaidInvoice } = require("../../services/financial/financialTransactionService");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
+
+async function publishInvoiceEvent(req, eventName, invoice, action, extraPayload = {}) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "memberbilling",
+      action,
+      entityId: invoice?._id,
+      entityType: "Invoice",
+      payload: {
+        type: invoice?.type,
+        status: invoice?.status,
+        amountCurrent: Number(invoice?.amountCurrent || 0),
+        dueDate: invoice?.dueDate,
+        ...extraPayload
+      }
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
+}
 
 function auditAssociateBilling(req, data) {
   return createBillingAuditLog({
@@ -117,6 +138,12 @@ router.post("/admin/associates/:associateId/generate", memberBillingAccess, asyn
       pdf = await createPdfForInvoice(invoice, tenantId);
     }
 
+    await publishInvoiceEvent(req, "invoice.created", invoice, "created", {
+      source: "individual-admin",
+      generatePix: Boolean(req.body?.generatePix),
+      generatePdf: Boolean(req.body?.generatePdf)
+    });
+
     await auditAssociateBilling(req, {
       status: "success",
       tenantId,
@@ -165,6 +192,8 @@ router.post("/", memberBillingAccess, async (req, res) => {
     });
 
     const invoice = await Invoice.create(payload);
+
+    await publishInvoiceEvent(req, "invoice.created", invoice, "created", { source: "manual" });
 
     return res.status(201).json({ ok: true, invoice });
   } catch (error) {
@@ -233,6 +262,7 @@ router.get("/:id", memberBillingAccess, async (req, res) => {
   }
 
   await refreshInvoiceAmount(invoice);
+  await publishInvoiceEvent(req, "invoice.cancelled", invoice, "cancelled");
 
   return res.json({ ok: true, invoice });
 });
@@ -315,6 +345,7 @@ router.post("/:id/mark-paid", memberBillingAccess, async (req, res) => {
 
   await invoice.save();
   await createIncomeForPaidInvoice(invoice, { amount: invoice.paidAmount, paidAt: invoice.paidAt, paymentMethod: "other" });
+  await publishInvoiceEvent(req, "invoice.paid", invoice, "paid", { paidAmount: invoice.paidAmount });
 
   return res.json({ ok: true, invoice });
 });
@@ -367,6 +398,12 @@ router.post("/generate-monthly", memberBillingAccess, async (req, res) => {
       dailyInterestValue: settings.defaultDailyInterestValue,
       status: "pending",
       metadata: { month, year, generatedBy: "manual-batch" }
+    });
+
+    await publishInvoiceEvent(req, "invoice.created", invoice, "created", {
+      source: "monthly-batch",
+      month,
+      year
     });
 
     created.push(invoice);

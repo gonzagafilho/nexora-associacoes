@@ -2,6 +2,7 @@ const webpush = require("web-push");
 
 const PushSubscription = require("../../models/PushSubscription");
 const Notification = require("../../models/Notification");
+const { publishOsEvent } = require("../../os/osEventPublisher");
 
 let warnedMissingVapid = false;
 
@@ -91,6 +92,26 @@ async function sendToSubscriptions(subscriptions = [], payload = {}) {
       }
     }
   }
+
+  await publishOsEvent("push.sent", {
+    tenantId: payload.tenantId || null,
+    userId: payload.userId || null,
+    module: "push",
+    action: "sent",
+    entityId: payload.notificationId || "",
+    entityType: payload.notificationId ? "Notification" : "PushDispatch",
+    payload: {
+      sent: summary.sent,
+      failed: summary.failed,
+      removed: summary.removed,
+      subscriptions: subscriptions.length,
+      enabled: summary.enabled
+    }
+  }, {
+    tenantId: payload.tenantId || null,
+    userId: payload.userId || null
+  }).catch(() => null);
+
   return summary;
 }
 
@@ -115,6 +136,8 @@ async function sendPushForNotification(notification) {
     title: item.title,
     body: item.message,
     notificationId: item._id || item.id,
+    tenantId: item.tenantId,
+    userId: item.userId,
     module: item.module,
     severity: item.severity,
     url: notificationUrl(item)

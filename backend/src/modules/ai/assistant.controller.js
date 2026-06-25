@@ -4,6 +4,7 @@ const { getOrCreateConversation, appendMessages, updateConversationState, listHi
 const { identifyIntent } = require("../../services/ai/aiIntentService");
 const { buildPlan, applyAnswerToPayload, confirmationText } = require("../../services/ai/aiPlannerService");
 const { executeAction } = require("../../services/ai/aiExecutionService");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -17,6 +18,20 @@ function acceptedConfirmation(value) {
 function deniedConfirmation(value) {
   const raw = String(value || "").trim().toLowerCase();
   return ["nao", "não", "n", "cancelar", "no"].includes(raw);
+}
+
+async function publishAiEventSafe(req, eventName, data = {}) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "ai",
+      action: data.action || "message",
+      entityId: data.entityId,
+      entityType: data.entityType || "AiConversation",
+      payload: data.payload || {}
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
 }
 
 async function resolveConversationSafe({ tenantId, userId, conversationId }) {
@@ -111,6 +126,12 @@ async function askAssistant(req, res) {
         }
       : identifyIntent(text);
 
+    await publishAiEventSafe(req, "ai.message", {
+      action: "message",
+      entityId: conversation?.conversationId,
+      payload: { text, intent: intentInfo.intent, type: intentInfo.type }
+    });
+
     if (intentInfo.type === "query") {
       const query = await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
       await appendMessagesSafe({ conversation, incoming: text, outgoing: query.answer, meta: { outgoing: { intent: query.intent, module: intentInfo.module } } });
@@ -152,6 +173,11 @@ async function askAssistant(req, res) {
 
       if (conversation.status === "awaiting_confirmation") {
         if (acceptedConfirmation(text)) {
+          await publishAiEventSafe(req, "ai.execution_confirmed", {
+            action: "execution_confirmed",
+            entityId: conversation?.conversationId,
+            payload: { command: activeExecution.action }
+          });
           const execution = await executeAction({
             tenantId: req.user.tenantId,
             userId: req.user.id,
@@ -176,6 +202,15 @@ async function askAssistant(req, res) {
               ...activeExecution,
               confirmed: true,
               result: execution
+            }
+          });
+          await publishAiEventSafe(req, "ai.execution_completed", {
+            action: "execution_completed",
+            entityId: conversation?.conversationId,
+            payload: {
+              command: activeExecution.action,
+              status: execution.status,
+              ok: execution.ok
             }
           });
           return res.json({ ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer, execution });
@@ -238,6 +273,17 @@ async function askAssistant(req, res) {
         }
       });
 
+      await publishAiEventSafe(req, "ai.execution_planned", {
+        action: "execution_planned",
+        entityId: conversation?.conversationId,
+        payload: {
+          command: intentInfo.intent,
+          module: plan.module,
+          missingFields: plan.missingFields,
+          requiresConfirmation: true
+        }
+      });
+
       return res.json({
         ok: true,
         conversationId: conversation?.conversationId,
@@ -280,6 +326,11 @@ async function legacyChat(req, res) {
     });
 
     const result = await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
+    await publishAiEventSafe(req, "ai.message", {
+      action: "message",
+      entityId: conversation?.conversationId,
+      payload: { text, intent: result.intent, channel: "legacy" }
+    });
     await appendMessagesSafe({ conversation, incoming: text, outgoing: result.answer, meta: { outgoing: { intent: result.intent, module: "NEXORA IA" } } });
     await updateConversationStateSafe(conversation, {
       intent: result.intent,

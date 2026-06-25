@@ -2,9 +2,28 @@ const express = require("express");
 const auth = require("../../middlewares/auth");
 const requireModule = require("../../middlewares/requireModule");
 const Associate = require("../../models/Associate");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 
 const router = express.Router();
 const associatesAccess = [auth, requireModule("associates")];
+
+async function publishAssociateEvent(req, eventName, associate, action) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "associates",
+      action,
+      entityId: associate?._id,
+      entityType: "Associate",
+      payload: {
+        name: associate?.name,
+        status: associate?.status,
+        email: associate?.email || ""
+      }
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
+}
 
 router.post("/", associatesAccess, async (req, res) => {
   try {
@@ -24,6 +43,8 @@ router.post("/", associatesAccess, async (req, res) => {
       notes: req.body.notes,
       status: req.body.status || "active"
     });
+
+    await publishAssociateEvent(req, "associate.created", associate, "created");
 
     return res.status(201).json({ ok: true, associate });
   } catch (error) {
@@ -64,6 +85,8 @@ router.get("/:id", associatesAccess, async (req, res) => {
     return res.status(404).json({ ok: false, message: "Associado não encontrado." });
   }
 
+  await publishAssociateEvent(req, "associate.updated", associate, "updated");
+
   return res.json({ ok: true, associate });
 });
 
@@ -91,6 +114,8 @@ router.put("/:id", associatesAccess, async (req, res) => {
   if (!associate) {
     return res.status(404).json({ ok: false, message: "Associado não encontrado." });
   }
+
+  await publishAssociateEvent(req, "associate.deleted", associate, "deleted");
 
   return res.json({ ok: true, associate });
 });

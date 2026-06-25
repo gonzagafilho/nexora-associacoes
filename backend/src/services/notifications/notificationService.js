@@ -11,6 +11,7 @@ const TenantSubscription = require("../../models/TenantSubscription");
 const SaasSubscriptionPayment = require("../../models/SaasSubscriptionPayment");
 const { SMART_ALERT_REFERENCE_TYPES } = require("./smartAlertTypes");
 const { sendPushForNotification, markNotificationPushDelivery } = require("../push/pushNotificationService");
+const { publishOsEvent } = require("../../os/osEventPublisher");
 
 const FUTURE_CHANNELS = Object.freeze({
   email: { enabled: false },
@@ -138,6 +139,20 @@ async function createNotification(options = {}) {
 
   try {
     const created = await Notification.insertMany(docs, { ordered: false });
+    await Promise.all(created.map((item) => publishOsEvent("notification.created", {
+      tenantId,
+      userId: item.userId,
+      module: "notifications",
+      action: "created",
+      entityId: item._id,
+      entityType: "Notification",
+      payload: {
+        title: item.title,
+        severity: item.severity,
+        type: item.type,
+        referenceType: item.referenceType
+      }
+    }, { tenantId, userId: item.userId }).catch(() => null)));
     await Promise.all(created.map((notification) => trySendPush(notification)));
     return created.map(serialize);
   } catch (error) {

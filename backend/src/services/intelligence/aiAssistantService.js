@@ -1,4 +1,5 @@
 const { buildExecutiveContext } = require("./executiveService");
+const { getOsEventsDashboard } = require("../system/osEventLogService");
 
 const HELP_QUESTIONS = [
   "Quanto entrou este mês?",
@@ -11,6 +12,8 @@ const HELP_QUESTIONS = [
   "Quais cobranças estão vencidas?",
   "Como está meu financeiro?",
   "Existem alertas críticos?",
+  "Quais eventos aconteceram hoje?",
+  "O que é o Event Engine?",
   "O que é o NEXORA OS?",
   "O que é o Kernel do NEXORA OS?"
 ];
@@ -32,6 +35,8 @@ function money(value) {
 function identifyIntent(question) {
   const text = normalize(question);
   if (!text) return "help";
+  if (text.includes("event engine")) return "event_engine";
+  if (text.includes("eventos") && text.includes("hoje")) return "events_today";
   if (text.includes("kernel") && text.includes("nexora os")) return "nexora_kernel";
   if (text.includes("nexora os")) return "nexora_os";
   if (text.includes("bi executivo") || text.includes("indicadores") || text.includes("resumo executivo")) return "executive_bi";
@@ -71,6 +76,20 @@ async function answerQuestion({ tenantId, userId, question }) {
       alertasCriticos: context.alertasCriticos
     };
     answer = `Resumo executivo: receita do mês ${money(context.receitaMes)}, despesa do mês ${money(context.despesaMes)}, saldo ${money(context.saldo)}, ${context.protocolosAbertos} protocolo(s) aberto(s), ${context.projetosAtrasados} projeto(s) atrasado(s) e ${context.alertasCriticos} alerta(s) crítico(s).`;
+  } else if (intent === "events_today") {
+    const dashboard = await getOsEventsDashboard({ tenantId });
+    const topModules = (dashboard.byModule || [])
+      .slice(0, 3)
+      .map((item) => `${item.module} (${item.total})`)
+      .join(", ");
+    data = {
+      todayEvents: dashboard.todayEvents,
+      totalEvents: dashboard.totalEvents,
+      byModule: dashboard.byModule
+    };
+    answer = `Hoje foram registrados ${dashboard.todayEvents} evento(s), com ${dashboard.totalEvents} no total. Principais módulos: ${topModules || "sem eventos relevantes"}.`;
+  } else if (intent === "event_engine") {
+    answer = "O Event Engine do NEXORA OS é o barramento interno que registra e distribui eventos entre os módulos da plataforma, permitindo automações, auditoria, notificações e integrações sem acoplamento direto entre os módulos.";
   } else if (intent === "financial_overview") {
     data = { receitaMes: context.receitaMes, despesaMes: context.despesaMes, saldo: context.saldo, inadimplencia: context.inadimplencia };
     answer = `Financeiro do mês: entrou ${money(context.receitaMes)}, saiu ${money(context.despesaMes)} e o saldo atual é ${money(context.saldo)}. Inadimplência: ${context.inadimplencia.count} cobrança(s), totalizando ${money(context.inadimplencia.total)}.`;

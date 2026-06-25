@@ -7,11 +7,31 @@ const Asset = require("../../models/Asset");
 const AssetHistory = require("../../models/AssetHistory");
 const Project = require("../../models/Project");
 const { ASSET_CATEGORIES, ASSET_STATUSES } = require("../../models/Asset");
+const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 
 const router = express.Router();
 const assetsAccess = [auth, requireModule("assets")];
 const CATEGORY_SET = new Set(ASSET_CATEGORIES);
 const STATUS_SET = new Set(ASSET_STATUSES);
+
+async function publishAssetEvent(req, eventName, asset, action) {
+  try {
+    await publishOsEvent(eventName, {
+      module: "assets",
+      action,
+      entityId: asset?._id,
+      entityType: "Asset",
+      payload: {
+        assetCode: asset?.assetCode,
+        name: asset?.name,
+        status: asset?.status,
+        category: asset?.category
+      }
+    }, buildEventContext(req));
+  } catch (_error) {
+    // never break primary flow
+  }
+}
 
 function roundMoney(value) {
   return Number(Number(value || 0).toFixed(2));
@@ -290,6 +310,7 @@ router.post("/", assetsAccess, async (req, res) => {
     const responseAsset = project
       ? { ...populated, projectId: { _id: payload.projectId, name: project.name, status: project.status } }
       : populated;
+    await publishAssetEvent(req, "asset.created", responseAsset || asset, "created");
     return res.status(201).json({ ok: true, asset: serializeAsset(responseAsset) });
   } catch (error) {
     if (error?.code === 11000) {
@@ -309,6 +330,7 @@ router.put("/:id", assetsAccess, async (req, res) => {
     if (project) asset.projectId = { _id: payload.projectId, name: project.name, status: project.status };
     await asset.save();
     await logHistory({ assetId: asset._id, tenantId: req.user.tenantId, action: "edicao", req, notes: req.body?.historyNotes || payload.notes });
+    await publishAssetEvent(req, "asset.updated", asset, "updated");
     return res.json({ ok: true, asset: serializeAsset(asset) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao atualizar ativo." });
@@ -326,6 +348,7 @@ router.post("/:id/maintenance", assetsAccess, async (req, res) => {
     if (req.body?.notes !== undefined) asset.notes = String(req.body.notes || "").trim();
     await asset.save();
     await logHistory({ assetId: asset._id, tenantId: req.user.tenantId, action: "manutencao", req, notes: req.body?.historyNotes || req.body?.notes || "" });
+    await publishAssetEvent(req, "asset.maintenance", asset, "maintenance");
     return res.json({ ok: true, asset: serializeAsset(asset) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao registrar manutenção." });
@@ -341,6 +364,7 @@ router.post("/:id/retire", assetsAccess, async (req, res) => {
     if (req.body?.notes !== undefined) asset.notes = String(req.body.notes || "").trim();
     await asset.save();
     await logHistory({ assetId: asset._id, tenantId: req.user.tenantId, action: "baixa", req, notes: req.body?.historyNotes || req.body?.notes || "" });
+    await publishAssetEvent(req, "asset.retired", asset, "retired");
     return res.json({ ok: true, asset: serializeAsset(asset) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao dar baixa no ativo." });
@@ -356,6 +380,7 @@ router.post("/:id/sell", assetsAccess, async (req, res) => {
     if (req.body?.notes !== undefined) asset.notes = String(req.body.notes || "").trim();
     await asset.save();
     await logHistory({ assetId: asset._id, tenantId: req.user.tenantId, action: "venda", req, notes: req.body?.historyNotes || req.body?.notes || "" });
+    await publishAssetEvent(req, "asset.sold", asset, "sold");
     return res.json({ ok: true, asset: serializeAsset(asset) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao vender ativo." });
@@ -367,6 +392,7 @@ router.delete("/:id", assetsAccess, async (req, res) => {
   if (!asset) return;
   await logHistory({ assetId: asset._id, tenantId: req.user.tenantId, action: "exclusao", req, notes: req.body?.historyNotes || req.body?.notes || asset.notes || "" });
   await Asset.deleteOne({ _id: asset._id, tenantId: req.user.tenantId });
+  await publishAssetEvent(req, "asset.deleted", asset, "deleted");
   return res.json({ ok: true, asset: serializeAsset(asset) });
 });
 

@@ -1,6 +1,7 @@
 const Invoice = require("../models/Invoice");
 const Associate = require("../models/Associate");
 const TenantBillingSettings = require("../models/TenantBillingSettings");
+const { publishOsEvent } = require("../os/osEventPublisher");
 
 function startOfDay(date) {
   const d = new Date(date);
@@ -88,6 +89,20 @@ async function refreshInvoiceAmount(invoice) {
 
   if (invoice.status === "pending" && today > dueDate) {
     invoice.status = "overdue";
+    await publishOsEvent("invoice.overdue", {
+      tenantId: invoice.tenantId,
+      userId: null,
+      module: "memberbilling",
+      action: "overdue",
+      entityId: invoice._id,
+      entityType: "Invoice",
+      occurredAt: new Date().toISOString(),
+      payload: {
+        type: invoice.type,
+        dueDate: invoice.dueDate,
+        amountCurrent: Number(invoice.amountCurrent || 0)
+      }
+    }, { tenantId: invoice.tenantId, userId: null });
   }
 
   await invoice.save();

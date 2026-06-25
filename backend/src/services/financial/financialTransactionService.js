@@ -1,4 +1,5 @@
 const FinancialTransaction = require("../../models/FinancialTransaction");
+const { publishOsEvent } = require("../../os/osEventPublisher");
 
 function getInvoicePaidAmount(invoice, fallbackAmount) {
   return Number(invoice?.paidAmount ?? invoice?.amountCurrent ?? invoice?.amountOriginal ?? fallbackAmount ?? 0);
@@ -20,7 +21,7 @@ async function createIncomeForPaidInvoice(invoice, options = {}) {
     const amount = getInvoicePaidAmount(invoice, options.amount);
     if (!amount || amount <= 0) return null;
 
-    return FinancialTransaction.create({
+    const transaction = await FinancialTransaction.create({
       tenantId: invoice.tenantId,
       type: "income",
       category: "Mensalidades",
@@ -34,6 +35,39 @@ async function createIncomeForPaidInvoice(invoice, options = {}) {
       referenceId: invoice._id,
       notes: options.notes || "Entrada criada automaticamente pela baixa da cobrança."
     });
+
+    await publishOsEvent("financial.transaction.created", {
+      tenantId: transaction.tenantId,
+      userId: null,
+      module: "financial",
+      action: "created",
+      entityId: transaction._id,
+      entityType: "FinancialTransaction",
+      payload: {
+        type: transaction.type,
+        status: transaction.status,
+        amount: Number(transaction.amount || 0),
+        referenceType: transaction.referenceType
+      }
+    }, { tenantId: transaction.tenantId, userId: null });
+
+    if (transaction.status === "paid") {
+      await publishOsEvent("financial.transaction.paid", {
+        tenantId: transaction.tenantId,
+        userId: null,
+        module: "financial",
+        action: "paid",
+        entityId: transaction._id,
+        entityType: "FinancialTransaction",
+        payload: {
+          type: transaction.type,
+          status: transaction.status,
+          amount: Number(transaction.amount || 0)
+        }
+      }, { tenantId: transaction.tenantId, userId: null });
+    }
+
+    return transaction;
   } catch (error) {
     console.error("[financial:invoice-income]", error.message);
     return null;

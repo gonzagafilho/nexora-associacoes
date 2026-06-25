@@ -6,6 +6,7 @@ const TenantSubscription = require("../models/TenantSubscription");
 const { mercadoPagoRequest } = require("./mercadopago/tenantMercadoPagoService");
 const { createBillingAuditLog } = require("./audit/billingAuditService");
 const { calculateTenantSubscription } = require("./subscription/subscriptionPricingService");
+const { publishOsEvent } = require("../os/osEventPublisher");
 
 const PROFESSIONAL_PLAN = "professional";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -171,6 +172,20 @@ async function markOverdueIfNeeded(subscription, now) {
     subscriptionId: subscription._id,
     status: "overdue"
   });
+
+  await publishOsEvent("subscription.overdue", {
+    tenantId: subscription.tenantId,
+    userId: null,
+    module: "saas",
+    action: "overdue",
+    entityId: subscription._id,
+    entityType: "TenantSubscription",
+    payload: {
+      nextBillingDate: subscription.nextBillingDate,
+      status: "overdue"
+    }
+  }, { tenantId: subscription.tenantId, userId: null });
+
   return true;
 }
 
@@ -213,6 +228,21 @@ async function runSubscriptionRenewalJob(options = {}) {
       } else {
         const saved = await createRenewalPayment(subscription, now);
         summary.generated += 1;
+
+        await publishOsEvent("subscription.renewal_created", {
+          tenantId: subscription.tenantId,
+          userId: null,
+          module: "saas",
+          action: "renewal_created",
+          entityId: saved._id,
+          entityType: "SaasSubscriptionPayment",
+          payload: {
+            amount: Number(saved.amount || 0),
+            status: saved.status,
+            source: "renewal"
+          }
+        }, { tenantId: subscription.tenantId, userId: null });
+
         logRenewal({
           tenantId: subscription.tenantId,
           subscriptionId: subscription._id,
