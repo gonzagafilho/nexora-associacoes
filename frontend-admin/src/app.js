@@ -537,7 +537,8 @@ const NEXORA_IA_QUICK_ACTIONS = [
   { icon: "🏢", label: "Patrimônio", question: "Quais patrimônios estão em manutenção?" },
   { icon: "💰", label: "Fluxo de caixa", question: "Fluxo de caixa" },
   { icon: "📈", label: "BI Executivo", question: "BI Executivo" },
-  { icon: "🔔", label: "Alertas críticos", question: "Existem alertas críticos?" }
+  { icon: "🔔", label: "Alertas críticos", question: "Existem alertas críticos?" },
+  { icon: "⚙", label: "NEXORA Runtime", question: "O que é o NEXORA Runtime?" }
 ];
 const NEXORA_IA_EXAMPLES = ["Quanto entrou este mês?", "Qual meu saldo?", "Existem cobranças vencidas?", "Quais projetos estão atrasados?", "Quantos protocolos existem?"];
 const NEXORA_IA_FUTURE_MODULES = ["Financeiro", "CRM", "Obras", "Patrimônio", "RH", "Jurídico", "Comercial", "WhatsApp", "Analytics", "Automações"];
@@ -574,6 +575,22 @@ function renderEventEngineSection(dashboard = {}, events = []) {
   const topModules = Array.isArray(dashboard.byModule) ? dashboard.byModule : [];
   const rows = (Array.isArray(events) ? events : []).slice(0, 12);
   return `<section class="card event-engine-section"><header class="event-engine-head"><div><small>Event Engine</small><h3>Barramento interno do Kernel</h3></div></header><div class="event-engine-metrics"><div><strong>${Number(dashboard.todayEvents || 0)}</strong><small>Eventos hoje</small></div><div><strong>${Number(dashboard.totalEvents || 0)}</strong><small>Eventos totais</small></div><div><strong>${Number(dashboard.failedEvents || 0)}</strong><small>Falhas</small></div><div><strong>${topModules[0]?.module ? escapeHtml(topModules[0].module) : "-"}</strong><small>Módulo líder</small></div></div><div class="event-engine-top-modules">${topModules.slice(0, 5).map((item) => `<span>${escapeHtml(item.module)} • ${Number(item.total || 0)}</span>`).join("") || "<span>Sem eventos registrados ainda.</span>"}</div><div class="table-wrap"><table class="table event-engine-table"><thead><tr><th>Data</th><th>Evento</th><th>Módulo</th><th>Ação</th><th>Entidade</th><th>Status</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${dateTime(item.occurredAt || item.createdAt)}</td><td>${escapeHtml(item.eventName || "-")}</td><td>${escapeHtml(item.module || "-")}</td><td>${escapeHtml(item.action || "-")}</td><td>${escapeHtml(item.entityType || "-")}</td><td><span class="os-badge ${Number(item.failed || 0) > 0 ? "os-badge-inactive" : "os-badge-active"}">${Number(item.failed || 0) > 0 ? "Falha" : "OK"}</span></td></tr>`).join("") || '<tr><td colspan="6" class="muted">Nenhum evento registrado.</td></tr>'}</tbody></table></div></section>`;
+}
+
+function runtimeMemorySummary(memoryUsage = {}) {
+  const rssMb = (Number(memoryUsage.rss || 0) / (1024 * 1024)).toFixed(1);
+  const heapUsedMb = (Number(memoryUsage.heapUsed || 0) / (1024 * 1024)).toFixed(1);
+  return `${rssMb} MB RSS • ${heapUsedMb} MB heap`;
+}
+
+function renderRuntimeInspectorSection(inspector = {}, health = {}) {
+  const services = Array.isArray(inspector.services) ? inspector.services : [];
+  const drivers = inspector.drivers || {};
+  const driverTypes = Object.keys(drivers);
+  const metrics = inspector.metrics || {};
+  const runtimeStatus = inspector.status || health.runtime?.status || "offline";
+
+  return `<section class="card runtime-inspector-section"><header class="event-engine-head"><div><small>Runtime Inspector</small><h3>NEXORA Runtime</h3></div><span class="os-badge ${runtimeStatus === "online" ? "os-badge-active" : "os-badge-inactive"}">${escapeHtml(runtimeStatus)}</span></header><div class="event-engine-metrics"><div><strong>${Number(inspector.uptime || 0)}s</strong><small>Uptime</small></div><div><strong>${services.length}</strong><small>Serviços</small></div><div><strong>${Number(inspector.sessions?.active || 0)}</strong><small>Sessões ativas</small></div><div><strong>${Number(inspector.cache?.total || 0)}</strong><small>Itens em cache</small></div><div><strong>${Number(metrics.eventsPublished || 0)}</strong><small>Eventos publicados</small></div><div><strong>${escapeHtml(runtimeMemorySummary(metrics.memoryUsage || {}))}</strong><small>Memória Node</small></div><div><strong>${driverTypes.length}</strong><small>Drivers</small></div><div><strong>${Number(inspector.activeWorkflows || 0)}</strong><small>Workflows ativos</small></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Serviço</th><th>Tipo</th><th>Status</th></tr></thead><tbody>${services.map((item) => `<tr><td>${escapeHtml(item.name || "-")}</td><td>${escapeHtml(item.metadata?.type || "service")}</td><td><span class="os-badge ${(item.metadata?.status || "").toLowerCase() === "online" ? "os-badge-active" : "os-badge-inactive"}>${escapeHtml(item.metadata?.status || "unknown")}</span></td></tr>`).join("") || '<tr><td colspan="3" class="muted">Sem serviços registrados.</td></tr>'}</tbody></table></div></section>`;
 }
 
 function normalizeAiConversationEntry(item = {}) {
@@ -684,11 +701,14 @@ async function renderIntelligence() {
   const data = bi.data || aiContext.context || {};
   content().innerHTML = `${pageHead("🧠 NEXORA IA", "Seu assistente inteligente de gestão.")}<section class="nexora-ai-hero"><div class="nexora-ai-orbit"><img src="${NEXORA_IA_AVATAR}" alt="NEXORA IA"></div><div><h2>🧠 NEXORA IA</h2><p class="nexora-ai-subtitle">Seu assistente inteligente de gestão.</p><div class="nexora-ai-copy"><p>Olá!</p><p>Sou a NEXORA IA.</p><p>Estou integrada ao seu ambiente e conheço apenas os dados da sua empresa.</p><p>Posso ajudar você a analisar indicadores, localizar informações, responder dúvidas sobre o financeiro, associados, projetos, patrimônio, protocolos e muito mais.</p><p>Nas próximas versões também executarei tarefas mediante sua confirmação.</p></div></div></section>${executiveCards(data)}<section class="nexora-ai-shortcuts"><header><h3>Atalhos rápidos</h3><small>Escolha um tema para a NEXORA IA analisar agora.</small></header><div>${NEXORA_IA_QUICK_ACTIONS.map((item) => `<button class="ai-shortcut" type="button" data-ai-question="${escapeHtml(item.question)}"><span>${item.icon}</span><strong>${escapeHtml(item.label)}</strong></button>`).join("")}</div></section><section class="intelligence-grid"><article class="card ai-console"><header class="ai-console-head"><div><h3>Conversa com a NEXORA IA</h3><p>Respostas objetivas, profissionais e baseadas nos dados reais deste tenant.</p></div><button class="button button-ghost button-sm" data-clear-ai>Limpar histórico</button></header><div class="ai-thinking" data-ai-thinking hidden><span></span>NEXORA IA está analisando...</div><form class="ai-form" data-ai-form><input class="input" name="question" placeholder="Pergunte qualquer coisa para a NEXORA IA..." autocomplete="off" required><button class="button button-primary" type="submit" data-ai-submit>Enviar</button></form><div class="ai-examples">${NEXORA_IA_EXAMPLES.map((example) => `<button type="button" data-ai-question="${escapeHtml(example)}">${escapeHtml(example)}</button>`).join("")}</div><div class="ai-history" data-ai-history>${renderAiHistory()}</div></article><article class="card nexora-ai-future"><h3>NEXORA IA oficial</h3><p>A arquitetura já fica preparada para novos assistentes por domínio.</p><div class="future-modules">${NEXORA_IA_FUTURE_MODULES.map((item) => `<span>NEXORA IA ${escapeHtml(item)}</span>`).join("")}</div><div class="report-list intelligence-list"><h3>Projetos atrasados</h3>${(data.listas?.projetosAtrasados || []).map((item) => `<div class="report-row"><div><span>${escapeHtml(item.name)}</span><small>${date(item.endDate)}</small></div><strong>${badge(item.status)}</strong></div>`).join("") || `<div class="empty ai-empty">Nenhum projeto atrasado.</div>`}</div></article></section>`;
 
-  const [systemOs, eventDashboard, eventList] = await Promise.all([
+  const [systemOs, eventDashboard, eventList, runtimeInspector, runtimeHealth] = await Promise.all([
     api("/api/system/os"),
     api("/api/system/events/dashboard"),
-    api("/api/system/events?limit=12")
+    api("/api/system/events?limit=12"),
+    api("/api/system/runtime/inspector"),
+    api("/api/system/runtime/health")
   ]);
+  content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderRuntimeInspectorSection(runtimeInspector, runtimeHealth));
   content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderEventEngineSection(eventDashboard, eventList.items || []));
   content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderSystemOsSection(systemOs));
   content().querySelector("[data-clear-ai]")?.addEventListener("click", () => {

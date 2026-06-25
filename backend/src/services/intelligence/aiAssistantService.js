@@ -13,6 +13,7 @@ const HELP_QUESTIONS = [
   "Como está meu financeiro?",
   "Existem alertas críticos?",
   "Quais eventos aconteceram hoje?",
+  "O que é o NEXORA Runtime?",
   "O que é o Event Engine?",
   "O que é o NEXORA OS?",
   "O que é o Kernel do NEXORA OS?"
@@ -35,6 +36,7 @@ function money(value) {
 function identifyIntent(question) {
   const text = normalize(question);
   if (!text) return "help";
+  if (text.includes("nexora runtime") || (text.includes("runtime") && text.includes("nexora"))) return "nexora_runtime";
   if (text.includes("event engine")) return "event_engine";
   if (text.includes("eventos") && text.includes("hoje")) return "events_today";
   if (text.includes("kernel") && text.includes("nexora os")) return "nexora_kernel";
@@ -60,8 +62,29 @@ function listNames(items, field = "name") {
 }
 
 async function answerQuestion({ tenantId, userId, question }) {
-  const context = await buildExecutiveContext({ tenantId, userId });
   const intent = identifyIntent(question);
+
+  if (intent === "event_engine") {
+    return {
+      ok: true,
+      intent,
+      answer: "O Event Engine do NEXORA OS é o barramento interno que registra e distribui eventos entre os módulos da plataforma, permitindo automações, auditoria, notificações e integrações sem acoplamento direto entre os módulos.",
+      data: {},
+      help: HELP_QUESTIONS
+    };
+  }
+
+  if (intent === "nexora_runtime") {
+    return {
+      ok: true,
+      intent,
+      answer: "O NEXORA Runtime é a camada de execução do NEXORA OS. Ele organiza contexto, cache, sessões, serviços, drivers, métricas e integração entre Kernel, Event Engine, Workflow Studio e NEXORA IA.",
+      data: {},
+      help: HELP_QUESTIONS
+    };
+  }
+
+  const context = await buildExecutiveContext({ tenantId, userId });
   let answer;
   let data = {};
 
@@ -88,8 +111,6 @@ async function answerQuestion({ tenantId, userId, question }) {
       byModule: dashboard.byModule
     };
     answer = `Hoje foram registrados ${dashboard.todayEvents} evento(s), com ${dashboard.totalEvents} no total. Principais módulos: ${topModules || "sem eventos relevantes"}.`;
-  } else if (intent === "event_engine") {
-    answer = "O Event Engine do NEXORA OS é o barramento interno que registra e distribui eventos entre os módulos da plataforma, permitindo automações, auditoria, notificações e integrações sem acoplamento direto entre os módulos.";
   } else if (intent === "financial_overview") {
     data = { receitaMes: context.receitaMes, despesaMes: context.despesaMes, saldo: context.saldo, inadimplencia: context.inadimplencia };
     answer = `Financeiro do mês: entrou ${money(context.receitaMes)}, saiu ${money(context.despesaMes)} e o saldo atual é ${money(context.saldo)}. Inadimplência: ${context.inadimplencia.count} cobrança(s), totalizando ${money(context.inadimplencia.total)}.`;
