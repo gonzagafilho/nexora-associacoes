@@ -76,7 +76,8 @@ const icons = {
   menu: "M4 6h16M4 12h16M4 18h16",
   saas: "M4 7h16M4 12h16M4 17h10m4-10v10M8 7v10",
   star: "m12 3 2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6-4.36-4.25 6.03-.88L12 3Z",
-  intelligence: "M12 3a5 5 0 0 0-5 5v1.5A3.5 3.5 0 0 0 8.5 16H9v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2h.5A3.5 3.5 0 0 0 19 12.5V8a5 5 0 0 0-5-5h-2Zm-2 8h4m-4 3h4"
+  intelligence: "M12 3a5 5 0 0 0-5 5v1.5A3.5 3.5 0 0 0 8.5 16H9v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2h.5A3.5 3.5 0 0 0 19 12.5V8a5 5 0 0 0-5-5h-2Zm-2 8h4m-4 3h4",
+  workflow: "M4 7h5V4H4v3Zm0 13h5v-3H4v3Zm11-13h5V4h-5v3Zm0 13h5v-3h-5v3ZM9 6h6m-6 12h6M6.5 7v10m11-10v10"
 };
 
 function icon(name) {
@@ -396,6 +397,12 @@ async function openTenantSignupModal() {
 
 const navItems = [
   ["dashboard", "Dashboard", "dashboard", "core"],
+  ["workflow-dashboard", "Workflow Studio • Dashboard", "workflow", "core"],
+  ["workflow-workflows", "Workflow Studio • Workflows", "workflow", "core"],
+  ["workflow-execucoes", "Workflow Studio • Execuções", "workflow", "core"],
+  ["workflow-templates", "Workflow Studio • Templates", "workflow", "core"],
+  ["workflow-marketplace", "Workflow Studio • Marketplace", "workflow", "core"],
+  ["workflow-logs", "Workflow Studio • Logs", "workflow", "core"],
   ["ia-chat", "🧠 NEXORA IA • Chat", "intelligence", "core"],
   ["ia-historico", "NEXORA IA • Histórico", "intelligence", "core"],
   ["ia-sugestoes", "NEXORA IA • Sugestões", "intelligence", "core"],
@@ -457,6 +464,12 @@ async function renderRoute() {
     if (state.route === "inteligencia") state.route = "ia-chat";
     const routes = {
       dashboard: renderDashboard,
+      "workflow-dashboard": renderWorkflowDashboard,
+      "workflow-workflows": renderWorkflowWorkflows,
+      "workflow-execucoes": renderWorkflowExecutions,
+      "workflow-templates": renderWorkflowTemplates,
+      "workflow-marketplace": renderWorkflowMarketplace,
+      "workflow-logs": renderWorkflowLogs,
       "ia-chat": renderIaChat,
       "ia-historico": renderIaHistorico,
       "ia-sugestoes": renderIaSugestoes,
@@ -488,6 +501,7 @@ async function renderRoute() {
 
 function dashboardMobileCards() {
   const cards = [
+    ["workflow-dashboard", "Workflow Studio", "workflow", "core"],
     ["ia-chat", "🧠 NEXORA IA", "intelligence", "core"],
     ["financeiro", "Financeiro", "card", "financial"],
     ["projetos", "Projetos", "projects", "projects"],
@@ -731,13 +745,184 @@ async function renderIaBiExecutivo() {
 }
 
 async function renderIaAutomacoes() {
-  content().innerHTML = `${pageHead("🧠 NEXORA IA • Automações", "Sugestões automáticas com confirmação obrigatória.")}<section class="card"><div class="ai-examples"><button type="button" data-ai-question="Existem 18 cobranças vencidas. Deseja enviar cobrança por WhatsApp?">Cobranças por WhatsApp</button><button type="button" data-ai-question="Existem equipamentos há mais de 90 dias em manutenção. Deseja abrir protocolos?">Protocolos de manutenção</button><button type="button" data-ai-question="Existem obras próximas do vencimento. Deseja visualizar?">Obras próximas do vencimento</button></div></section>`;
+  content().innerHTML = `${pageHead("🧠 NEXORA IA • Automações", "Sugestões automáticas com confirmação obrigatória.")}<section class="card"><div class="ai-examples"><button type="button" data-ai-question="Existem 18 cobranças vencidas. Deseja enviar cobrança por WhatsApp?">Cobranças por WhatsApp</button><button type="button" data-ai-question="Existem equipamentos há mais de 90 dias em manutenção. Deseja abrir protocolos?">Protocolos de manutenção</button><button type="button" data-ai-question="Existem obras próximas do vencimento. Deseja visualizar?">Obras próximas do vencimento</button><button type="button" data-create-workflow-plan>Crie um Workflow</button></div></section>`;
   content().querySelectorAll("[data-ai-question]").forEach((button) => {
     button.addEventListener("click", async () => {
       location.hash = "ia-chat";
       await askNexoraIa(button.dataset.aiQuestion || "");
     });
   });
+  content().querySelector("[data-create-workflow-plan]")?.addEventListener("click", () => {
+    openModal(
+      "Plano de Workflow",
+      '<div class="detail-grid"><div class="detail-item span-2"><small>Fluxo sugerido</small>Trigger: invoice.overdue → condição de valor em aberto → ação de notificação + push + evento de auditoria.</div><div class="detail-item"><small>Impacto</small>Redução de inadimplência com reação automática.</div><div class="detail-item"><small>Segurança</small>Execução por tenant, confirmação humana e logs completos.</div><div class="detail-item span-2" style="display:flex;gap:8px;flex-wrap:wrap"><button class="button button-primary" type="button" data-workflow-plan-create>Criar Workflow</button><button class="button button-secondary" type="button" data-workflow-plan-edit>Editar Workflow</button><button class="button button-ghost" type="button" data-workflow-plan-cancel>Cancelar</button></div></div>',
+      null,
+      "Fechar"
+    );
+    document.querySelector("[data-workflow-plan-create]")?.addEventListener("click", async () => {
+      location.hash = "workflow-templates";
+      toast("Template pronto para criação rápida.");
+      document.querySelector(".modal-backdrop")?.remove();
+    });
+    document.querySelector("[data-workflow-plan-edit]")?.addEventListener("click", async () => {
+      location.hash = "workflow-workflows";
+      document.querySelector(".modal-backdrop")?.remove();
+      setTimeout(() => {
+        document.querySelector("[data-new-workflow]")?.click();
+      }, 120);
+    });
+    document.querySelector("[data-workflow-plan-cancel]")?.addEventListener("click", () => {
+      document.querySelector(".modal-backdrop")?.remove();
+    });
+  });
+}
+
+const WORKFLOW_TEMPLATE_SEED = [
+  {
+    name: "Cobrança vencida com notificação",
+    description: "Quando a cobrança vencer, notifica e publica evento de auditoria.",
+    trigger: { type: "event", eventName: "invoice.overdue" },
+    actions: [
+      { type: "sendNotification" },
+      { type: "sendPush" },
+      { type: "publishEvent", eventName: "workflow.audit.invoice_overdue" }
+    ]
+  },
+  {
+    name: "Associado novo com boas-vindas",
+    description: "Dispara onboarding para novo associado.",
+    trigger: { type: "event", eventName: "associate.created" },
+    actions: [{ type: "sendNotification" }, { type: "sendPush" }]
+  },
+  {
+    name: "Fechamento de protocolo",
+    description: "Ao fechar protocolo, cria evento de acompanhamento.",
+    trigger: { type: "event", eventName: "protocol.closed" },
+    actions: [{ type: "publishEvent", eventName: "workflow.audit.protocol_closed" }]
+  }
+];
+
+function workflowActionOptions(selected = "sendNotification") {
+  const options = [
+    ["sendNotification", "Notificação"],
+    ["sendPush", "Push"],
+    ["executeAI", "IA"],
+    ["publishEvent", "Evento"],
+    ["callWebhook", "Webhook"],
+    ["createProtocol", "Criar Protocolo"],
+    ["createInvoice", "Criar Cobrança"],
+    ["updateAssociate", "Atualizar Associado"],
+    ["updateProject", "Atualizar Projeto"],
+    ["updateAsset", "Atualizar Ativo"]
+  ];
+  return `<select class="select" name="actionType">${options.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("")}</select>`;
+}
+
+function openWorkflowModal(workflow = null) {
+  const isEdit = Boolean(workflow?._id);
+  openModal(
+    isEdit ? "Editar Workflow" : "Novo Workflow",
+    `<form data-workflow-form><div class="form-grid">${field("name", "Nome", workflow?.name || "", "text", true)}${field("description", "Descrição", workflow?.description || "")}${field("eventName", "Evento gatilho", workflow?.trigger?.eventName || "invoice.overdue", "text", true)}<label class="field"><span>Ação principal</span>${workflowActionOptions(workflow?.actions?.[0]?.type || "sendNotification")}</label><label class="field" style="display:flex;align-items:center;gap:8px;margin-top:24px"><input type="checkbox" name="enabled" ${workflow?.enabled !== false ? "checked" : ""}>Workflow habilitado</label></div></form>`,
+    async () => {
+      const form = document.querySelector("[data-workflow-form]");
+      const fd = new FormData(form);
+      const payload = {
+        name: String(fd.get("name") || "").trim(),
+        description: String(fd.get("description") || "").trim(),
+        enabled: fd.get("enabled") === "on",
+        trigger: { type: "event", eventName: String(fd.get("eventName") || "").trim() },
+        actions: [{ type: String(fd.get("actionType") || "sendNotification") }]
+      };
+      if (isEdit) {
+        await api(`/api/workflows/${workflow._id}`, { method: "PUT", body: JSON.stringify(payload) });
+        toast("Workflow atualizado.");
+      } else {
+        await api("/api/workflows", { method: "POST", body: JSON.stringify(payload) });
+        toast("Workflow criado.");
+      }
+      await renderWorkflowWorkflows();
+    },
+    "Cancelar",
+    isEdit ? "Salvar alterações" : "Criar workflow"
+  );
+}
+
+async function renderWorkflowDashboard() {
+  const [dashboard, executions] = await Promise.all([
+    api("/api/workflows/dashboard"),
+    api("/api/workflows/executions?limit=12")
+  ]);
+  const statuses = Array.isArray(dashboard.dashboard?.statuses) ? dashboard.dashboard.statuses : [];
+  const byStatus = statuses.reduce((acc, item) => ({ ...acc, [item._id]: item.total }), {});
+  const rows = (executions.executions || []).map((item) => `<tr><td>${escapeHtml(item.workflowId?.name || item.workflowId || "—")}</td><td>${badge(item.status || "pending")}</td><td>${dateTime(item.startedAt || item.createdAt)}</td><td>${Number(item.duration || 0)} ms</td></tr>`).join("");
+  content().innerHTML = `${pageHead("Workflow Studio • Dashboard", "Monitoramento de execução e saúde dos fluxos.", '<a class="button button-primary" href="#workflow-workflows">Gerenciar workflows</a>')}<section class="metrics">${metric("Workflows ativos", dashboard.dashboard?.totalWorkflows || 0, "", true)}${metric("Execuções concluídas", byStatus.completed || 0)}${metric("Execuções falhas", byStatus.failed || 0)}${metric("Execuções em andamento", byStatus.running || 0)}</section><section class="card"><h3>Últimas execuções</h3><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Status</th><th>Início</th><th>Duração</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty">Sem execuções recentes.</td></tr>'}</tbody></table></div></section>`;
+}
+
+async function renderWorkflowWorkflows() {
+  const { workflows } = await api("/api/workflows");
+  const rows = (workflows || []).map((workflow) => `<tr><td><strong>${escapeHtml(workflow.name || "—")}</strong><br><small>${escapeHtml(workflow.description || "Sem descrição")}</small></td><td>${escapeHtml(workflow.trigger?.eventName || "—")}</td><td>${badge(workflow.enabled ? "active" : "inactive")}</td><td><div class="actions"><button class="button button-secondary button-sm" data-edit-workflow="${workflow._id}">Editar</button><button class="button button-secondary button-sm" data-toggle-workflow="${workflow._id}" data-enabled="${workflow.enabled ? "1" : "0"}">${workflow.enabled ? "Desabilitar" : "Habilitar"}</button><button class="button button-primary button-sm" data-run-workflow="${workflow._id}">Executar</button><button class="button button-danger button-sm" data-delete-workflow="${workflow._id}">Excluir</button></div></td></tr>`).join("");
+  content().innerHTML = `${pageHead("Workflow Studio • Workflows", "Editor visual e controle operacional dos fluxos.", '<button class="button button-primary" data-new-workflow>Novo workflow</button>')}<section class="card"><div class="detail-item" style="margin-bottom:12px"><small>Biblioteca de blocos</small>Trigger • Condition • Action • Delay • Decision • Scheduler • IA • Webhook • Push • Notificação • Evento</div><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Gatilho</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty">Nenhum workflow cadastrado.</td></tr>'}</tbody></table></div></section>`;
+
+  content().querySelector("[data-new-workflow]")?.addEventListener("click", () => openWorkflowModal());
+  content().querySelectorAll("[data-edit-workflow]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const workflow = (workflows || []).find((item) => item._id === button.dataset.editWorkflow);
+      openWorkflowModal(workflow || null);
+    });
+  });
+  content().querySelectorAll("[data-run-workflow]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/workflows/${button.dataset.runWorkflow}/run`, { method: "POST", body: JSON.stringify({ payload: {} }) });
+      toast("Execução iniciada.");
+      await renderWorkflowWorkflows();
+    });
+  });
+  content().querySelectorAll("[data-toggle-workflow]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const enabled = button.dataset.enabled === "1";
+      await api(`/api/workflows/${button.dataset.toggleWorkflow}/${enabled ? "disable" : "enable"}`, { method: "POST" });
+      toast(enabled ? "Workflow desabilitado." : "Workflow habilitado.");
+      await renderWorkflowWorkflows();
+    });
+  });
+  content().querySelectorAll("[data-delete-workflow]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/workflows/${button.dataset.deleteWorkflow}`, { method: "DELETE" });
+      toast("Workflow removido.");
+      await renderWorkflowWorkflows();
+    });
+  });
+}
+
+async function renderWorkflowExecutions() {
+  const { executions } = await api("/api/workflows/executions?limit=50");
+  const rows = (executions || []).map((item) => `<tr><td>${escapeHtml(item.workflowId?.name || item.workflowId || "—")}</td><td>${badge(item.status || "pending")}</td><td>${dateTime(item.startedAt || item.createdAt)}</td><td>${dateTime(item.finishedAt)}</td><td>${Number(item.duration || 0)} ms</td><td>${escapeHtml(item.error || "-")}</td></tr>`).join("");
+  content().innerHTML = `${pageHead("Workflow Studio • Execuções", "Histórico detalhado por tenant.")}<section class="card"><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Status</th><th>Início</th><th>Fim</th><th>Duração</th><th>Erro</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="empty">Sem execuções registradas.</td></tr>'}</tbody></table></div></section>`;
+}
+
+async function renderWorkflowTemplates() {
+  const cards = WORKFLOW_TEMPLATE_SEED.map((template, index) => `<article class="card"><h3>${escapeHtml(template.name)}</h3><p style="color:var(--muted)">${escapeHtml(template.description)}</p><div class="detail-grid" style="margin:12px 0"><div class="detail-item"><small>Trigger</small>${escapeHtml(template.trigger.eventName)}</div><div class="detail-item"><small>Ações</small>${template.actions.map((item) => escapeHtml(item.type)).join(", ")}</div></div><button class="button button-primary" data-create-template="${index}">Usar template</button></article>`).join("");
+  content().innerHTML = `${pageHead("Workflow Studio • Templates", "Fluxos prontos para acelerar implantação.")}<section class="grid-2">${cards}</section>`;
+  content().querySelectorAll("[data-create-template]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const template = WORKFLOW_TEMPLATE_SEED[Number(button.dataset.createTemplate)];
+      if (!template) return;
+      await api("/api/workflows", { method: "POST", body: JSON.stringify({ ...template, enabled: true }) });
+      toast("Workflow criado a partir do template.");
+      location.hash = "workflow-workflows";
+    });
+  });
+}
+
+async function renderWorkflowMarketplace() {
+  content().innerHTML = `${pageHead("Workflow Studio • Marketplace", "Catálogo curado para extensões futuras.")}<section class="card"><div class="grid-2"><article class="detail-item"><small>Pacote</small>Recuperação de inadimplência</article><article class="detail-item"><small>Pacote</small>Onboarding de associados</article><article class="detail-item"><small>Pacote</small>Pós-venda de projetos</article><article class="detail-item"><small>Pacote</small>Gestão de manutenção patrimonial</article></div><p style="margin-top:14px;color:var(--muted)">Marketplace em modo inicial: os pacotes aparecerão conforme novas integrações forem publicadas.</p></section>`;
+}
+
+async function renderWorkflowLogs() {
+  const events = await api("/api/system/events?limit=30");
+  const workflowEvents = (events.items || []).filter((item) => String(item.eventName || "").startsWith("workflow."));
+  const rows = workflowEvents.map((item) => `<tr><td>${escapeHtml(item.eventName || "—")}</td><td>${badge(item.status || "pending")}</td><td>${Number(item.delivered || 0)}</td><td>${Number(item.failed || 0)}</td><td>${dateTime(item.createdAt)}</td></tr>`).join("");
+  content().innerHTML = `${pageHead("Workflow Studio • Logs", "Diagnóstico de eventos e trilha operacional.")}<section class="card"><div class="table-wrap"><table><thead><tr><th>Evento</th><th>Status</th><th>Entregues</th><th>Falhas</th><th>Data</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">Sem logs de workflow até o momento.</td></tr>'}</tbody></table></div></section>`;
 }
 
 async function renderIaConfiguracoes() {

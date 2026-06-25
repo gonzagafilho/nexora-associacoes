@@ -37,7 +37,12 @@ const RESERVED_EVENTS = [
   "ai.execution",
   "ai.execution_planned",
   "ai.execution_confirmed",
-  "ai.execution_completed"
+  "ai.execution_completed",
+  "workflow.started",
+  "workflow.action",
+  "workflow.completed",
+  "workflow.failed",
+  "workflow.scheduler"
 ];
 
 const subscribers = new Map();

@@ -23,6 +23,7 @@ const pushRoutes = require("./modules/push/push.routes");
 const aiRoutes = require("./modules/ai/assistant.routes");
 const biRoutes = require("./modules/bi/bi.routes");
 const systemRoutes = require("./modules/system/system.routes");
+const workflowRoutes = require("./workflow/routes/workflow.routes");
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use("/api/push", pushRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/bi", biRoutes);
 app.use("/api/system", systemRoutes);
+app.use("/api/workflows", workflowRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",
   pixRoutes.mercadoPagoWebhook
