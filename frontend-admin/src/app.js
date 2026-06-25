@@ -17,6 +17,10 @@ const state = {
   projectFilters: { q: "", status: "", type: "" },
   assetFilters: { q: "", status: "", category: "" },
   protocolFilters: { q: "", status: "", priority: "", type: "", dateFrom: "", dateTo: "", page: 1, limit: 20 },
+  aiConversation: JSON.parse(localStorage.getItem("nexora_ai_conversation") || "[]"),
+  aiConversationId: localStorage.getItem("nexora_ai_conversation_id") || "",
+  aiPendingAction: null,
+  aiThinking: false,
   notifications: {
     open: false,
     unread: 0,
@@ -71,7 +75,8 @@ const icons = {
   logout: "M10 17l5-5-5-5m5 5H3m12-9h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4",
   menu: "M4 6h16M4 12h16M4 18h16",
   saas: "M4 7h16M4 12h16M4 17h10m4-10v10M8 7v10",
-  star: "m12 3 2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6-4.36-4.25 6.03-.88L12 3Z"
+  star: "m12 3 2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6-4.36-4.25 6.03-.88L12 3Z",
+  intelligence: "M12 3a5 5 0 0 0-5 5v1.5A3.5 3.5 0 0 0 8.5 16H9v2a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2h.5A3.5 3.5 0 0 0 19 12.5V8a5 5 0 0 0-5-5h-2Zm-2 8h4m-4 3h4"
 };
 
 function icon(name) {
@@ -391,6 +396,12 @@ async function openTenantSignupModal() {
 
 const navItems = [
   ["dashboard", "Dashboard", "dashboard", "core"],
+  ["ia-chat", "🧠 NEXORA IA • Chat", "intelligence", "core"],
+  ["ia-historico", "NEXORA IA • Histórico", "intelligence", "core"],
+  ["ia-sugestoes", "NEXORA IA • Sugestões", "intelligence", "core"],
+  ["ia-bi", "NEXORA IA • BI Executivo", "intelligence", "core"],
+  ["ia-automacoes", "NEXORA IA • Automações", "intelligence", "core"],
+  ["ia-configuracoes", "NEXORA IA • Configurações", "intelligence", "core"],
   ["associados", "Associados", "users", "associates"],
   ["mensalidades", "Mensalidades", "calendar", "memberbilling"],
   ["cobrancas", "Cobranças", "receipt", "memberbilling"],
@@ -429,7 +440,8 @@ async function renderShell() {
 function setRoute(route) { state.route = route; document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.route === route)); const sidebar = app.querySelector("[data-sidebar]"); if (sidebar) sidebar.classList.remove("open"); }
 window.addEventListener("hashchange", async () => {
   if (!state.token) return;
-  const target = location.hash.replace("#", "") || "dashboard";
+  const rawTarget = location.hash.replace("#", "") || "dashboard";
+  const target = rawTarget === "inteligencia" ? "ia-chat" : rawTarget;
   const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
   setRoute(visibleRoutes.has(target) ? target : "dashboard");
   if (state.route === "dashboard" && target !== "dashboard") location.hash = "dashboard";
@@ -442,7 +454,29 @@ function pageHead(title, subtitle, actions = "") { return `<header class="page-h
 async function renderRoute() {
   loading();
   try {
-    const routes = { dashboard: renderDashboard, associados: renderAssociates, mensalidades: renderInvoices, cobrancas: renderCharges, projetos: renderProjects, patrimonio: renderAssets, protocolos: renderProtocols, notificacoes: renderNotificationsRoute, financeiro: renderFinancial, mercadopago: renderMercadoPago, saas: renderSaasDashboard, assinatura: renderSubscription, configuracoes: renderSettings };
+    if (state.route === "inteligencia") state.route = "ia-chat";
+    const routes = {
+      dashboard: renderDashboard,
+      "ia-chat": renderIaChat,
+      "ia-historico": renderIaHistorico,
+      "ia-sugestoes": renderIaSugestoes,
+      "ia-bi": renderIaBiExecutivo,
+      "ia-automacoes": renderIaAutomacoes,
+      "ia-configuracoes": renderIaConfiguracoes,
+      inteligencia: renderIaChat,
+      associados: renderAssociates,
+      mensalidades: renderInvoices,
+      cobrancas: renderCharges,
+      projetos: renderProjects,
+      patrimonio: renderAssets,
+      protocolos: renderProtocols,
+      notificacoes: renderNotificationsRoute,
+      financeiro: renderFinancial,
+      mercadopago: renderMercadoPago,
+      saas: renderSaasDashboard,
+      assinatura: renderSubscription,
+      configuracoes: renderSettings
+    };
     const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
     if (!visibleRoutes.has(state.route)) {
       setRoute("dashboard");
@@ -454,6 +488,7 @@ async function renderRoute() {
 
 function dashboardMobileCards() {
   const cards = [
+    ["ia-chat", "🧠 NEXORA IA", "intelligence", "core"],
     ["financeiro", "Financeiro", "card", "financial"],
     ["projetos", "Projetos", "projects", "projects"],
     ["patrimonio", "Patrimônio", "projects", "assets"],
@@ -464,14 +499,240 @@ function dashboardMobileCards() {
 }
 
 async function renderDashboard() {
-  const [{ data }, me] = await Promise.all([api("/api/dashboard"), api("/api/me")]); state.me = me; syncSessionBranding(me);
+  const [{ data }, me, systemOs] = await Promise.all([api("/api/dashboard"), api("/api/me"), api("/api/system/os")]); state.me = me; syncSessionBranding(me);
   const max = Math.max(...data.months.map((m) => Math.max(m.received, m.charged)), 1); const delinquency = data.associates ? Math.round((data.overdueInvoices / Math.max(data.pendingInvoices + data.paidInvoices + data.overdueInvoices, 1)) * 100) : 0; const sub = me.subscription || {}; const trialDays = sub.trialEndsAt ? Math.max(0, Math.ceil((new Date(sub.trialEndsAt) - new Date()) / 86400000)) : 0;
   const branding = resolveBranding(me.branding);
-  content().innerHTML = `${pageHead("Dashboard", "Visão geral da operação da associação.")}${dashboardMobileCards()}<section class="card brand-banner"><div><small>Identidade ativa</small><h2>${escapeHtml(currentTenantName())}</h2><p>${escapeHtml(me.tenant?.legalDocument || "Documento não informado")}</p></div><div class="brand-banner-logo">${brandLogoHtml(branding, 72, "brand-banner-img")}</div></section><section class="metrics">
-    ${metric("Plano atual", sub.plan === "professional" ? "Profissional" : (sub.plan || "—"), sub.status === "trialing" ? `${trialDays} dias de teste` : (sub.status || ""), true)}${metric("Total associados", data.associates)}${metric("Ativos", data.activeAssociates)}${metric("Mensalidades pendentes", data.pendingInvoices, "", true)}
-    ${metric("Mensalidades pagas", data.paidInvoices)}${metric("Valor a receber", money(data.totalReceber))}${metric("Valor recebido", money(data.totalRecebido), "", true)}${metric("PIX gerados", data.pixGenerated)}${metric("Boletos gerados", data.boletosGenerated)}
+  content().innerHTML = `${pageHead("Dashboard", "Visão geral da operação da associação.")}${dashboardMobileCards()}${renderSystemOsMiniCard(systemOs)}<section class="card brand-banner"><div><small>Identidade ativa</small><h2>${escapeHtml(currentTenantName())}</h2><p>${escapeHtml(me.tenant?.legalDocument || "Documento não informado")}</p></div><div class="brand-banner-logo">${brandLogoHtml(branding, 72, "brand-banner-img")}</div></section><section class="metrics">
+     ${metric("Plano atual", sub.plan === "professional" ? "Profissional" : (sub.plan || "—"), sub.status === "trialing" ? `${trialDays} dias de teste` : (sub.status || ""), true)}
+     ${metric("Total associados", data.associates)}
+     ${metric("Ativos", data.activeAssociates)}
+     ${metric("Mensalidades pendentes", data.pendingInvoices, "", true)}
+     ${metric("Mensalidades pagas", data.paidInvoices)}
+     ${metric("Valor a receber", money(data.totalReceber))}
+     ${metric("Valor recebido", money(data.totalRecebido), "", true)}
+     ${metric("PIX gerados", data.pixGenerated)}
+     ${metric("Boletos gerados", data.boletosGenerated)}
   </section><section class="grid-2"><div class="card"><h3>Recebimentos e cobranças — últimos 6 meses</h3><div class="chart">${data.months.map((month) => `<div class="bar-group"><div class="bars"><span class="bar secondary" style="height:${Math.max(3, month.charged / max * 180)}px" title="Cobrado ${money(month.charged)}"></span><span class="bar" style="height:${Math.max(3, month.received / max * 180)}px" title="Recebido ${money(month.received)}"></span></div><span class="bar-label">${month.label}</span></div>`).join("")}</div></div><div class="card"><h3>Inadimplência</h3><div class="donut" style="--value:${delinquency}%" data-label="${delinquency}%"></div><p style="text-align:center;color:var(--muted)">${data.overdueInvoices} mensalidade(s) vencida(s) • ${money(data.totalVencido)}</p></div></section>`;
 }
+const NEXORA_IA_AVATAR = "/nexora-ia-avatar.png";
+const NEXORA_IA_QUICK_ACTIONS = [
+  { icon: "📊", label: "Como está meu financeiro?", question: "Como está meu financeiro?" },
+  { icon: "👥", label: "Quantos associados tenho?", question: "Quantos associados existem?" },
+  { icon: "📂", label: "Protocolos em aberto", question: "Quantos protocolos estão abertos?" },
+  { icon: "🏗", label: "Obras atrasadas", question: "Quais projetos estão atrasados?" },
+  { icon: "🏢", label: "Patrimônio", question: "Quais patrimônios estão em manutenção?" },
+  { icon: "💰", label: "Fluxo de caixa", question: "Fluxo de caixa" },
+  { icon: "📈", label: "BI Executivo", question: "BI Executivo" },
+  { icon: "🔔", label: "Alertas críticos", question: "Existem alertas críticos?" }
+];
+const NEXORA_IA_EXAMPLES = ["Quanto entrou este mês?", "Qual meu saldo?", "Existem cobranças vencidas?", "Quais projetos estão atrasados?", "Quantos protocolos existem?"];
+const NEXORA_IA_FUTURE_MODULES = ["Financeiro", "CRM", "Obras", "Patrimônio", "RH", "Jurídico", "Comercial", "WhatsApp", "Analytics", "Automações"];
+
+function systemOsModuleList(os = {}) {
+  return Array.isArray(os.modules) ? os.modules : [];
+}
+
+function systemOsModuleBadge(module) {
+  const tone = module.enabled ? "active" : "inactive";
+  const label = module.enabled ? "Ativo" : "Inativo";
+  return `<span class="os-badge os-badge-${tone}">${label}</span>`;
+}
+
+function renderSystemOsMiniCard(os = {}) {
+  const modules = systemOsModuleList(os);
+  const activeCount = modules.filter((module) => module.enabled).length;
+  const pwa = modules.find((module) => module.code === "pwa");
+  const push = modules.find((module) => module.code === "push");
+  const ai = modules.find((module) => module.code === "aiCopilot");
+  return `<section class="card nexora-os-card"><div class="nexora-os-card-head"><div><small>NEXORA OS</small><h3>Online</h3></div><div class="nexora-os-card-stack"><div><strong>${activeCount}/${modules.length || 0}</strong><small>Módulos ativos</small></div><div><strong>${ai?.enabled ? "Ativa" : "Inativa"}</strong><small>IA</small></div><div><strong>${pwa?.enabled ? "Ativo" : "Inativo"}</strong><small>PWA</small></div><div><strong>${push?.enabled ? "Ativo" : "Inativo"}</strong><small>Push</small></div></div></div></section>`;
+}
+
+function renderSystemOsSection(os = {}) {
+  const modules = systemOsModuleList(os);
+  const activeCount = modules.filter((module) => module.enabled).length;
+  const visualOrder = ["financial", "projects", "assets", "protocols", "notifications", "alerts", "aiCopilot"];
+  const orderedModules = visualOrder.map((code) => modules.find((module) => module.code === code)).filter(Boolean);
+  const mapLines = ["NEXORA OS", ...orderedModules.map((module, index) => `${index === orderedModules.length - 1 ? "└" : "├"} ${module.name}`)];
+  return `<section class="card nexora-os-section"><header class="nexora-os-section-head"><div><small>NEXORA OS</small><h3>Operating System da gestão</h3></div><span class="os-badge os-badge-active">${activeCount}/${modules.length || 0} ativos</span></header><p class="nexora-os-lead">A NEXORA IA opera sobre o NEXORA OS, o núcleo inteligente que conecta todos os módulos da sua organização.</p><pre class="nexora-os-map">${mapLines.map((line) => escapeHtml(line)).join("\n")}</pre><div class="nexora-os-badges">${modules.map((module) => `<div class="nexora-os-module"><div><strong>${escapeHtml(module.name)}</strong><small>${escapeHtml(module.description || "")}</small></div>${systemOsModuleBadge(module)}</div>`).join("")}</div></section>`;
+}
+
+function normalizeAiConversationEntry(item = {}) {
+  if (item.question || item.answer) return item;
+  if (item.role === "user") return { id: item.at || crypto.randomUUID?.() || String(Date.now()), at: item.at || new Date().toISOString(), question: item.text || "", answer: "", responseTimeMs: 0, intent: "unknown" };
+  return { id: item.at || crypto.randomUUID?.() || String(Date.now()), at: item.at || new Date().toISOString(), question: "", answer: item.text || "", responseTimeMs: 0, intent: "unknown" };
+}
+function persistAiConversation() {
+  state.aiConversation = state.aiConversation.map(normalizeAiConversationEntry).slice(-30);
+  localStorage.setItem("nexora_ai_conversation", JSON.stringify(state.aiConversation));
+}
+function aiIntentModule(intent = "") {
+  const modules = {
+    monthly_income: ["💰", "Financeiro"],
+    monthly_expense: ["💰", "Financeiro"],
+    balance: ["💰", "Financeiro"],
+    cash_flow: ["💰", "Fluxo de caixa"],
+    financial_overview: ["📊", "Financeiro"],
+    executive_bi: ["📈", "BI Executivo"],
+    open_protocols: ["📂", "Protocolos"],
+    delayed_projects: ["🏗", "Obras"],
+    assets_maintenance: ["🏢", "Patrimônio"],
+    associates: ["👥", "Associados"],
+    overdue_invoices: ["💳", "Cobranças"],
+    critical_alerts: ["🔔", "Alertas"]
+  };
+  return modules[intent] || ["🧠", "NEXORA IA"];
+}
+function aiResponseTime(ms = 0) {
+  const value = Number(ms || 0);
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+}
+function renderAiHistory() {
+  const conversations = state.aiConversation.map(normalizeAiConversationEntry).filter((item) => item.question || item.answer).slice(-30).reverse();
+  if (!conversations.length) return `<div class="empty ai-empty">Nenhuma conversa com a NEXORA IA ainda.</div>`;
+  return conversations.map((item) => {
+    const [moduleIcon, moduleName] = aiIntentModule(item.intent);
+    return `<article class="ai-history-item"><header><div class="ai-history-module"><span>${moduleIcon}</span><strong>${escapeHtml(moduleName)}</strong></div><small>${dateTime(item.at)} • ${aiResponseTime(item.responseTimeMs)}</small></header><div class="ai-qa"><small>Pergunta</small><p>${escapeHtml(item.question || "—")}</p></div><div class="ai-qa answer"><small>Resposta</small><p>${escapeHtml(item.answer || "NEXORA IA está analisando...")}</p></div></article>`;
+  }).join("");
+}
+function updateAiHistory() {
+  const history = content().querySelector("[data-ai-history]");
+  if (history) history.innerHTML = renderAiHistory();
+}
+function setNexoraIaThinking(value) {
+  state.aiThinking = Boolean(value);
+  const thinking = content().querySelector("[data-ai-thinking]");
+  const button = content().querySelector("[data-ai-submit]");
+  if (thinking) thinking.hidden = !state.aiThinking;
+  if (button) button.disabled = state.aiThinking;
+}
+function executiveCards(data = {}) {
+  return `<section class="metrics intelligence-metrics">${metric("Receita do mês", money(data.receitaMes || 0), "Entradas pagas", true)}${metric("Despesa do mês", money(data.despesaMes || 0), "Saídas pagas")}${metric("Saldo", money(data.saldo || 0), "Caixa atual", true)}${metric("Inadimplência", money(data.inadimplencia?.total || 0), `${Number(data.inadimplencia?.count || 0)} cobrança(s)`)}${metric("Protocolos abertos", data.protocolosAbertos || 0)}${metric("Projetos ativos", data.projetosAtivos || 0, "Em execução", true)}${metric("Projetos atrasados", data.projetosAtrasados || 0)}${metric("Patrimônio total", data.patrimonioTotal?.count || 0, money(data.patrimonioTotal?.value || 0), true)}${metric("Alertas críticos", data.alertasCriticos || 0)}${metric("Não lidas", data.notificacoesNaoLidas || 0, "Notificações")}</section>`;
+}
+async function askNexoraIa(question) {
+  const cleanQuestion = String(question || "").trim();
+  if (!cleanQuestion || state.aiThinking) return;
+  const startedAt = performance.now();
+  setNexoraIaThinking(true);
+  try {
+    const result = await api("/api/ai/assistant/message", {
+      method: "POST",
+      body: JSON.stringify({
+        message: cleanQuestion,
+        conversationId: state.aiConversationId || undefined
+      })
+    });
+    if (result.conversationId) {
+      state.aiConversationId = result.conversationId;
+      localStorage.setItem("nexora_ai_conversation_id", state.aiConversationId);
+    }
+    if (result.action?.type === "navigate" && result.action?.route) {
+      state.aiPendingAction = {
+        route: result.action.route,
+        intent: result.intent,
+        payload: result.plan?.payload || result.data || {}
+      };
+      location.hash = result.action.route;
+    }
+    const responseTimeMs = Math.max(1, Math.round(performance.now() - startedAt));
+    state.aiConversation.push({
+      schemaVersion: 1,
+      source: "frontend-local",
+      tenantId: state.tenant?._id || state.tenant?.id || state.me?.tenant?._id || state.me?.tenant?.id || null,
+      userId: state.user?.id || state.user?._id || null,
+      at: new Date().toISOString(),
+      question: cleanQuestion,
+      answer: result.answer || "Não encontrei dados para responder com segurança.",
+      intent: result.intent || "unknown",
+      module: result.module || aiIntentModule(result.intent || "unknown")[1],
+      responseTimeMs
+    });
+    persistAiConversation();
+    updateAiHistory();
+  } catch (error) {
+    const responseTimeMs = Math.max(1, Math.round(performance.now() - startedAt));
+    state.aiConversation.push({ schemaVersion: 1, source: "frontend-local", at: new Date().toISOString(), question: cleanQuestion, answer: error.message, intent: "error", module: "NEXORA IA", responseTimeMs });
+    persistAiConversation();
+    updateAiHistory();
+    toast(error.message, true);
+  } finally {
+    setNexoraIaThinking(false);
+  }
+}
+async function renderIntelligence() {
+  persistAiConversation();
+  const [bi, aiContext] = await Promise.all([api("/api/bi/executive"), api("/api/ai/context")]);
+  const data = bi.data || aiContext.context || {};
+  content().innerHTML = `${pageHead("🧠 NEXORA IA", "Seu assistente inteligente de gestão.")}<section class="nexora-ai-hero"><div class="nexora-ai-orbit"><img src="${NEXORA_IA_AVATAR}" alt="NEXORA IA"></div><div><h2>🧠 NEXORA IA</h2><p class="nexora-ai-subtitle">Seu assistente inteligente de gestão.</p><div class="nexora-ai-copy"><p>Olá!</p><p>Sou a NEXORA IA.</p><p>Estou integrada ao seu ambiente e conheço apenas os dados da sua empresa.</p><p>Posso ajudar você a analisar indicadores, localizar informações, responder dúvidas sobre o financeiro, associados, projetos, patrimônio, protocolos e muito mais.</p><p>Nas próximas versões também executarei tarefas mediante sua confirmação.</p></div></div></section>${executiveCards(data)}<section class="nexora-ai-shortcuts"><header><h3>Atalhos rápidos</h3><small>Escolha um tema para a NEXORA IA analisar agora.</small></header><div>${NEXORA_IA_QUICK_ACTIONS.map((item) => `<button class="ai-shortcut" type="button" data-ai-question="${escapeHtml(item.question)}"><span>${item.icon}</span><strong>${escapeHtml(item.label)}</strong></button>`).join("")}</div></section><section class="intelligence-grid"><article class="card ai-console"><header class="ai-console-head"><div><h3>Conversa com a NEXORA IA</h3><p>Respostas objetivas, profissionais e baseadas nos dados reais deste tenant.</p></div><button class="button button-ghost button-sm" data-clear-ai>Limpar histórico</button></header><div class="ai-thinking" data-ai-thinking hidden><span></span>NEXORA IA está analisando...</div><form class="ai-form" data-ai-form><input class="input" name="question" placeholder="Pergunte qualquer coisa para a NEXORA IA..." autocomplete="off" required><button class="button button-primary" type="submit" data-ai-submit>Enviar</button></form><div class="ai-examples">${NEXORA_IA_EXAMPLES.map((example) => `<button type="button" data-ai-question="${escapeHtml(example)}">${escapeHtml(example)}</button>`).join("")}</div><div class="ai-history" data-ai-history>${renderAiHistory()}</div></article><article class="card nexora-ai-future"><h3>NEXORA IA oficial</h3><p>A arquitetura já fica preparada para novos assistentes por domínio.</p><div class="future-modules">${NEXORA_IA_FUTURE_MODULES.map((item) => `<span>NEXORA IA ${escapeHtml(item)}</span>`).join("")}</div><div class="report-list intelligence-list"><h3>Projetos atrasados</h3>${(data.listas?.projetosAtrasados || []).map((item) => `<div class="report-row"><div><span>${escapeHtml(item.name)}</span><small>${date(item.endDate)}</small></div><strong>${badge(item.status)}</strong></div>`).join("") || `<div class="empty ai-empty">Nenhum projeto atrasado.</div>`}</div></article></section>`;
+
+  const systemOs = await api("/api/system/os");
+  content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderSystemOsSection(systemOs));
+  content().querySelector("[data-clear-ai]")?.addEventListener("click", () => {
+    state.aiConversation = [];
+    state.aiConversationId = "";
+    localStorage.removeItem("nexora_ai_conversation_id");
+    persistAiConversation();
+    updateAiHistory();
+  });
+  content().querySelectorAll("[data-ai-question]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await askNexoraIa(button.dataset.aiQuestion || button.textContent || "");
+    });
+  });
+  content().querySelector("[data-ai-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = event.currentTarget.elements.question;
+    const question = String(input.value || "").trim();
+    input.value = "";
+    await askNexoraIa(question);
+    input.focus();
+  });
+}
+
+async function renderIaChat() {
+  return renderIntelligence();
+}
+
+async function renderIaHistorico() {
+  const history = await api("/api/ai/assistant/history?limit=50");
+  const rows = (history.conversations || []).map((item) => {
+    const last = Array.isArray(item.messages) ? item.messages[item.messages.length - 1] : null;
+    return `<article class="ai-history-item"><header><div class="ai-history-module"><span>🧠</span><strong>${escapeHtml(item.module || "NEXORA IA")}</strong></div><small>${dateTime(item.updatedAt)} • ${escapeHtml(item.status || "open")}</small></header><div class="ai-qa"><small>Intent</small><p>${escapeHtml(item.intent || "unknown")}</p></div><div class="ai-qa answer"><small>Última resposta</small><p>${escapeHtml(last?.text || "Sem mensagens")}</p></div></article>`;
+  }).join("");
+  content().innerHTML = `${pageHead("🧠 NEXORA IA • Histórico", "Conversas persistidas em MongoDB por tenant e por usuário.")}<section class="card"><div class="ai-history">${rows || '<div class="empty ai-empty">Nenhum histórico persistido.</div>'}</div></section>`;
+}
+
+async function renderIaSugestoes() {
+  const ctx = await api("/api/ai/assistant/context");
+  const suggestions = ctx.suggestions || [];
+  content().innerHTML = `${pageHead("🧠 NEXORA IA • Sugestões", "Recomendações proativas com base no contexto atual.")}<section class="card"><div class="ai-examples">${suggestions.map((item) => `<button type="button" data-ai-question="${escapeHtml(item)}">${escapeHtml(item)}</button>`).join("") || '<div class="empty ai-empty">Nenhuma recomendação no momento.</div>'}</div></section>`;
+  content().querySelectorAll("[data-ai-question]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      location.hash = "ia-chat";
+      await askNexoraIa(button.dataset.aiQuestion || "");
+    });
+  });
+}
+
+async function renderIaBiExecutivo() {
+  const ctx = await api("/api/ai/assistant/context");
+  const data = ctx.context || {};
+  content().innerHTML = `${pageHead("🧠 NEXORA IA • BI Executivo", "BI explicativo e orientado a decisão.")}<section class="card"><p>${escapeHtml(ctx.explain || "Sem análise comparativa disponível.")}</p><p>Motivos prováveis:</p><ul><li>novas cobranças</li><li>redução da inadimplência</li><li>aumento de serviços</li></ul></section>${executiveCards(data)}`;
+}
+
+async function renderIaAutomacoes() {
+  content().innerHTML = `${pageHead("🧠 NEXORA IA • Automações", "Sugestões automáticas com confirmação obrigatória.")}<section class="card"><div class="ai-examples"><button type="button" data-ai-question="Existem 18 cobranças vencidas. Deseja enviar cobrança por WhatsApp?">Cobranças por WhatsApp</button><button type="button" data-ai-question="Existem equipamentos há mais de 90 dias em manutenção. Deseja abrir protocolos?">Protocolos de manutenção</button><button type="button" data-ai-question="Existem obras próximas do vencimento. Deseja visualizar?">Obras próximas do vencimento</button></div></section>`;
+  content().querySelectorAll("[data-ai-question]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      location.hash = "ia-chat";
+      await askNexoraIa(button.dataset.aiQuestion || "");
+    });
+  });
+}
+
+async function renderIaConfiguracoes() {
+  content().innerHTML = `${pageHead("🧠 NEXORA IA • Configurações", "Preparação da arquitetura NEXORA OS.")}<section class="card"><p>Preparado para evolução futura:</p><div class="future-modules"><span>NEXORA Vision</span><span>NEXORA Voice</span><span>NEXORA OCR</span><span>NEXORA Analytics</span><span>NEXORA Forecast</span><span>NEXORA Agents</span></div><p style="margin-top:12px;color:var(--muted)">Sem implementação ativa nesta versão.</p></section>`;
+}
+
 async function renderNotificationsRoute() {
   const [summary, list] = await Promise.all([
     api("/api/notifications/dashboard"),
@@ -1076,6 +1337,20 @@ async function renderFinancial() {
       metric("Vencidas", money(overdueTotal), "Entradas e saídas") +
     '</section>' + renderFinancialReportSection(report) + '<section class="card" style="margin-top:16px"><form class="toolbar" data-financial-filters><input class="input" name="q" placeholder="Buscar descrição, categoria, fornecedor" value="' + escapeHtml(state.financialFilters.q) + '"><select class="select" name="type" style="max-width:160px"><option value=""' + (!state.financialFilters.type ? ' selected' : '') + '>Todos os tipos</option><option value="income"' + (state.financialFilters.type === 'income' ? ' selected' : '') + '>Entradas</option><option value="expense"' + (state.financialFilters.type === 'expense' ? ' selected' : '') + '>Saídas</option></select><select class="select" name="status" style="max-width:180px"><option value=""' + (!state.financialFilters.status ? ' selected' : '') + '>Todos os status</option><option value="pending"' + (state.financialFilters.status === 'pending' ? ' selected' : '') + '>Pendentes</option><option value="paid"' + (state.financialFilters.status === 'paid' ? ' selected' : '') + '>Pagas</option><option value="cancelled"' + (state.financialFilters.status === 'cancelled' ? ' selected' : '') + '>Canceladas</option><option value="overdue"' + (state.financialFilters.status === 'overdue' ? ' selected' : '') + '>Vencidas</option></select><input class="input" name="category" placeholder="Categoria" value="' + escapeHtml(state.financialFilters.category) + '"><input class="input" type="date" name="dateFrom" value="' + escapeHtml(state.financialFilters.dateFrom) + '"><input class="input" type="date" name="dateTo" value="' + escapeHtml(state.financialFilters.dateTo) + '"><button class="button button-primary" type="submit">Filtrar</button></form>' + renderFinancialRows(list.items || []) + financialPagination(list) + '</section>';
   bindFinancial();
+  if (state.aiPendingAction?.route === "financeiro") {
+    const pending = state.aiPendingAction;
+    state.aiPendingAction = null;
+    const type = pending.intent === "create_expense" ? "expense" : pending.intent === "create_income" ? "income" : "";
+    if (type) {
+      await openFinancialModal(type, {
+        category: pending.payload?.category || "",
+        description: pending.payload?.description || "",
+        amount: pending.payload?.amount || "",
+        dueDate: pending.payload?.dueDate || "",
+        notes: "Pré-preenchido pela NEXORA IA"
+      });
+    }
+  }
 }
 function bindFinancial() {
   content().querySelector("[data-new-income]")?.addEventListener("click", () => openFinancialModal("income"));
