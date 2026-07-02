@@ -6,6 +6,7 @@ const { buildPlan, applyAnswerToPayload, confirmationText } = require("../../ser
 const { executeAction } = require("../../services/ai/aiExecutionService");
 const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
 const { supervisor: agentSupervisor } = require("../../agents");
+const { buildCopilotMemoryContext } = require("../copilot");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -32,6 +33,14 @@ async function publishAiEventSafe(req, eventName, data = {}) {
     }, buildEventContext(req));
   } catch (_error) {
     // never break primary flow
+  }
+}
+
+async function buildMemoryContextSafe({ tenantId, question }) {
+  try {
+    return await buildCopilotMemoryContext({ tenantId, question });
+  } catch (_error) {
+    return { memories: [], promptContext: "" };
   }
 }
 
@@ -106,6 +115,8 @@ async function askAssistant(req, res) {
     const text = String(req.body?.message || req.body?.question || "").trim();
     if (!text) return res.status(400).json({ ok: false, message: "Pergunta não informada." });
 
+    const memoryContext = await buildMemoryContextSafe({ tenantId: req.user.tenantId, question: text });
+
     const conversation = await resolveConversationSafe({
       tenantId: req.user.tenantId,
       userId: req.user.id,
@@ -134,11 +145,15 @@ async function askAssistant(req, res) {
     });
 
     if (intentInfo.type === "query") {
-      const supervised = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id });
-      const query = supervised.agentsUsed?.length
-        ? { ok: true, intent: intentInfo.intent, answer: supervised.answer, data: supervised.data, agentsUsed: supervised.agentsUsed, supervisor: true }
-        : await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
-      await appendMessagesSafe({ conversation, incoming: text, outgoing: query.answer, meta: { outgoing: { intent: query.intent, module: intentInfo.module, agentsUsed: query.agentsUsed || [], supervisor: Boolean(query.supervisor) } } });
+      const supervised = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id, memoryContext });
+      let query;
+      if (supervised.agentsUsed?.length) {
+        query = { ok: true, intent: intentInfo.intent, answer: supervised.answer, data: { ...(supervised.data || {}), memoryContext }, agentsUsed: supervised.agentsUsed, supervisor: true };
+      } else {
+        const legacyQuery = await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
+        query = { ...legacyQuery, data: { ...(legacyQuery.data || {}), memoryContext } };
+      }
+      await appendMessagesSafe({ conversation, incoming: text, outgoing: query.answer, meta: { outgoing: { intent: query.intent, module: intentInfo.module, agentsUsed: query.agentsUsed || [], supervisor: Boolean(query.supervisor), memoryContext } } });
       await updateConversationStateSafe(conversation, {
         intent: query.intent,
         module: intentInfo.module,
@@ -300,9 +315,9 @@ async function askAssistant(req, res) {
       });
     }
 
-    const supervisedFallback = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id });
+    const supervisedFallback = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id, memoryContext });
     if (supervisedFallback.agentsUsed?.length) {
-      await appendMessagesSafe({ conversation, incoming: text, outgoing: supervisedFallback.answer, meta: { outgoing: { intent: "agent_supervisor", module: "NEXORA IA", agentsUsed: supervisedFallback.agentsUsed, supervisor: true } } });
+      await appendMessagesSafe({ conversation, incoming: text, outgoing: supervisedFallback.answer, meta: { outgoing: { intent: "agent_supervisor", module: "NEXORA IA", agentsUsed: supervisedFallback.agentsUsed, supervisor: true, memoryContext } } });
       await updateConversationStateSafe(conversation, {
         intent: "agent_supervisor",
         module: "NEXORA IA",
@@ -310,7 +325,7 @@ async function askAssistant(req, res) {
         responseTime: Date.now() - startedAt,
         execution: { action: "", requiredConfirmation: false, confirmed: false, plan: null, payload: null, result: null }
       });
-      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: "agent_supervisor", module: "NEXORA IA", answer: supervisedFallback.answer, data: supervisedFallback.data, agentsUsed: supervisedFallback.agentsUsed, supervisor: true });
+      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: "agent_supervisor", module: "NEXORA IA", answer: supervisedFallback.answer, data: { ...(supervisedFallback.data || {}), memoryContext }, agentsUsed: supervisedFallback.agentsUsed, supervisor: true });
     }
 
     const fallbackAnswer = "Posso ajudar com comandos como: cadastrar associado, cadastrar despesa, abrir financeiro, consultar saldo.";
@@ -336,19 +351,22 @@ async function legacyChat(req, res) {
     const text = String(req.body?.question || req.body?.message || "").trim();
     if (!text) return res.status(400).json({ ok: false, message: "Pergunta não informada." });
 
+    const memoryContext = await buildMemoryContextSafe({ tenantId: req.user.tenantId, question: text });
+
     const conversation = await resolveConversationSafe({
       tenantId: req.user.tenantId,
       userId: req.user.id,
       conversationId: req.body?.conversationId
     });
 
-    const result = await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
+    const legacyResult = await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
+    const result = { ...legacyResult, data: { ...(legacyResult.data || {}), memoryContext } };
     await publishAiEventSafe(req, "ai.message", {
       action: "message",
       entityId: conversation?.conversationId,
       payload: { text, intent: result.intent, channel: "legacy" }
     });
-    await appendMessagesSafe({ conversation, incoming: text, outgoing: result.answer, meta: { outgoing: { intent: result.intent, module: "NEXORA IA" } } });
+    await appendMessagesSafe({ conversation, incoming: text, outgoing: result.answer, meta: { outgoing: { intent: result.intent, module: "NEXORA IA", memoryContext } } });
     await updateConversationStateSafe(conversation, {
       intent: result.intent,
       module: "NEXORA IA",

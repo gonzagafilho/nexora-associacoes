@@ -22,6 +22,7 @@ const notificationRoutes = require("./modules/notifications/notifications.routes
 const pushRoutes = require("./modules/push/push.routes");
 const aiRoutes = require("./modules/ai/assistant.routes");
 const agentRoutes = require("./modules/agents/agents.routes");
+const memoryRoutes = require("./modules/memory/memory.routes");
 const biRoutes = require("./modules/bi/bi.routes");
 const systemRoutes = require("./modules/system/system.routes");
 const workflowRoutes = require("./workflow/routes/workflow.routes");
@@ -60,6 +61,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/agents", agentRoutes);
+app.use("/api/memory", memoryRoutes);
 app.use("/api/bi", biRoutes);
 app.use("/api/system", systemRoutes);
 app.use("/api/workflows", workflowRoutes);
