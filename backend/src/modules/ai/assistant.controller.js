@@ -10,6 +10,7 @@ const { buildCopilotMemoryContext } = require("../copilot");
 const { normalizeProjectKey } = require("../memory/memory.service");
 const aiActivityLogService = require("./aiActivityLog.service");
 const { registry: skillsRegistry } = require("./skills/registry");
+const { orchestratorService } = require("./orchestrator");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -167,6 +168,29 @@ function resolveSkillCandidate({ text, intentInfo, projectKey }) {
   return null;
 }
 
+function resolveOrchestratorCandidate({ text, intentInfo }) {
+  const lower = String(text || "").trim().toLowerCase();
+  if (!lower) return null;
+
+  if (/orquestr|orchestr|plano de acoes|plano de ações|multi\s*skill|multi\s*etapa/.test(lower)) {
+    return { mode: "explicit" };
+  }
+
+  if (/(cobran|bolepix|pix|boleto).*(protocol|protocolo).*(whatsapp|notifica)/.test(lower)) {
+    return { mode: "financial_collection" };
+  }
+
+  if (/(protocol|protocolo).*(whatsapp|notifica).*(workflow)/.test(lower)) {
+    return { mode: "protocol_followup" };
+  }
+
+  if (intentInfo?.type === "action" && /workflow|protocol|financeiro|finance/.test(lower) && /(depois|em seguida|tambem|também|e )/.test(lower)) {
+    return { mode: "intent_chain" };
+  }
+
+  return null;
+}
+
 async function getContext(req, res) {
   try {
     const context = await buildSmartContext({
@@ -258,6 +282,169 @@ async function askAssistant(req, res) {
           route: activeExecution.plan?.route
         }
       : identifyIntent(text);
+
+    const orchestratorCandidate = resolveOrchestratorCandidate({ text, intentInfo });
+    if (orchestratorCandidate) {
+      const planResult = await orchestratorService.plan({
+        tenantId: req.user.tenantId,
+        userId: req.user.id,
+        userRole: req.user.role,
+        userEmail: req.user.email,
+        enabledModules: req.user.enabledModules,
+        question: text,
+        projectKey,
+        input: { projectKey }
+      });
+
+      if (planResult.policy?.blocked) {
+        const error = new Error(planResult.policy.reasons?.[0] || "Plano bloqueado pela Policy Engine.");
+        error.statusCode = planResult.policy.code || 403;
+        throw error;
+      }
+
+      const planSteps = (planResult.plan?.steps || []).map((step) => step.skill).join(" -> ");
+      const requiresConfirmation = Boolean(planResult.policy?.requiresConfirmation);
+
+      if (requiresConfirmation) {
+        const confirmationAnswer = `Plano criado com ${planResult.plan.steps.length} etapa(s): ${planSteps}. Responda 'sim' para executar agora ou 'não' para cancelar.`;
+
+        await appendMessagesSafe({
+          conversation,
+          incoming: text,
+          outgoing: confirmationAnswer,
+          meta: {
+            outgoing: {
+              intent: "orchestrator.plan",
+              module: "NEXORA Orchestrator",
+              planId: planResult.plan.id,
+              memoryContext
+            }
+          }
+        });
+
+        await updateConversationStateSafe(conversation, {
+          intent: "orchestrator.execute",
+          module: "NEXORA Orchestrator",
+          status: "awaiting_confirmation",
+          responseTime: Date.now() - startedAt,
+          execution: {
+            action: "orchestrator.execute",
+            requiredConfirmation: true,
+            confirmed: false,
+            plan: {
+              id: planResult.plan.id,
+              intent: planResult.plan.intent,
+              steps: planResult.plan.steps,
+              module: "NEXORA Orchestrator"
+            },
+            payload: { planId: planResult.plan.id },
+            result: null
+          }
+        });
+
+        const responsePayload = {
+          ok: true,
+          conversationId: conversation?.conversationId,
+          intent: "orchestrator.plan",
+          module: "NEXORA Orchestrator",
+          answer: confirmationAnswer,
+          requiresConfirmation: true,
+          orchestratorPlanId: planResult.plan.id,
+          plan: planResult.plan,
+          policy: planResult.policy
+        };
+
+        return respondAssistantSuccess({
+          req,
+          res,
+          startedAt,
+          text,
+          projectKey,
+          memoryContext,
+          module: "NEXORA Orchestrator",
+          action: "orchestrator.plan",
+          answer: confirmationAnswer,
+          metadata: {
+            conversationId: conversation?.conversationId,
+            orchestratorPlanId: planResult.plan.id,
+            requiresConfirmation: true
+          },
+          payload: responsePayload
+        });
+      }
+
+      const executionResult = await orchestratorService.execute({
+        tenantId: req.user.tenantId,
+        userId: req.user.id,
+        userRole: req.user.role,
+        userEmail: req.user.email,
+        enabledModules: req.user.enabledModules,
+        planId: planResult.plan.id,
+        confirm: false
+      });
+
+      const answer = executionResult.execution.success
+        ? `Orquestração concluída com sucesso em ${executionResult.execution.totalDurationMs}ms (${executionResult.execution.executedSteps}/${executionResult.execution.totalSteps} skills).`
+        : `Orquestração finalizada com falha em ${executionResult.execution.failedStep || "etapa desconhecida"}: ${executionResult.execution.errorMessage || "erro não informado"}.`;
+
+      await appendMessagesSafe({
+        conversation,
+        incoming: text,
+        outgoing: answer,
+        meta: {
+          outgoing: {
+            intent: "orchestrator.execute",
+            module: "NEXORA Orchestrator",
+            planId: planResult.plan.id,
+            memoryContext
+          }
+        }
+      });
+
+      await updateConversationStateSafe(conversation, {
+        intent: "orchestrator.execute",
+        module: "NEXORA Orchestrator",
+        status: executionResult.execution.success ? "executed" : "error",
+        responseTime: Date.now() - startedAt,
+        execution: {
+          action: "orchestrator.execute",
+          requiredConfirmation: requiresConfirmation,
+          confirmed: true,
+          plan: { id: planResult.plan.id, intent: planResult.plan.intent, steps: planResult.plan.steps },
+          payload: { planId: planResult.plan.id },
+          result: executionResult.execution
+        }
+      });
+
+      const responsePayload = {
+        ok: true,
+        conversationId: conversation?.conversationId,
+        intent: "orchestrator.execute",
+        module: "NEXORA Orchestrator",
+        answer,
+        orchestratorPlanId: planResult.plan.id,
+        execution: executionResult.execution,
+        plan: executionResult.plan
+      };
+
+      return respondAssistantSuccess({
+        req,
+        res,
+        startedAt,
+        text,
+        projectKey,
+        memoryContext,
+        module: "NEXORA Orchestrator",
+        action: "orchestrator.execute",
+        answer,
+        metadata: {
+          conversationId: conversation?.conversationId,
+          orchestratorPlanId: planResult.plan.id,
+          success: Boolean(executionResult.execution.success)
+        },
+        payload: responsePayload
+      });
+    }
 
     const skillCandidate = resolveSkillCandidate({ text, intentInfo, projectKey });
     if (skillCandidate) {
@@ -401,6 +588,62 @@ async function askAssistant(req, res) {
 
       if (conversation.status === "awaiting_confirmation") {
         if (acceptedConfirmation(text)) {
+          if (activeExecution.action === "orchestrator.execute") {
+            const executionResult = await orchestratorService.execute({
+              tenantId: req.user.tenantId,
+              userId: req.user.id,
+              userRole: req.user.role,
+              userEmail: req.user.email,
+              enabledModules: req.user.enabledModules,
+              planId: activeExecution.payload?.planId,
+              confirm: true
+            });
+
+            const answer = executionResult.execution.success
+              ? `Plano orquestrado executado com sucesso (${executionResult.execution.executedSteps}/${executionResult.execution.totalSteps} skills).`
+              : `Plano orquestrado falhou em ${executionResult.execution.failedStep || "etapa desconhecida"}: ${executionResult.execution.errorMessage || "erro não informado"}.`;
+
+            await appendMessagesSafe({ conversation, incoming: text, outgoing: answer });
+            await updateConversationStateSafe(conversation, {
+              status: executionResult.execution.success ? "executed" : "error",
+              responseTime: Date.now() - startedAt,
+              execution: {
+                ...activeExecution,
+                confirmed: true,
+                result: executionResult.execution
+              }
+            });
+
+            const responsePayload = {
+              ok: true,
+              conversationId: conversation?.conversationId,
+              intent: "orchestrator.execute",
+              module: "NEXORA Orchestrator",
+              answer,
+              orchestratorPlanId: activeExecution.payload?.planId,
+              execution: executionResult.execution,
+              plan: executionResult.plan
+            };
+
+            return respondAssistantSuccess({
+              req,
+              res,
+              startedAt,
+              text,
+              projectKey,
+              memoryContext,
+              module: "NEXORA Orchestrator",
+              action: "orchestrator.execute",
+              answer,
+              metadata: {
+                conversationId: conversation?.conversationId,
+                orchestratorPlanId: activeExecution.payload?.planId,
+                success: Boolean(executionResult.execution.success)
+              },
+              payload: responsePayload
+            });
+          }
+
           await publishAiEventSafe(req, "ai.execution_confirmed", {
             action: "execution_confirmed",
             entityId: conversation?.conversationId,

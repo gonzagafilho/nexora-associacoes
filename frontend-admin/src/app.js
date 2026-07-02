@@ -1012,7 +1012,7 @@ function aiCenterTab(activeTab, key, label) {
 }
 
 function aiCenterTabs(activeTab) {
-  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "overview", "Visão Geral")}${aiCenterTab(activeTab, "memories", "Memórias")}${aiCenterTab(activeTab, "projects", "Projetos")}${aiCenterTab(activeTab, "logs", "Logs da IA")}${aiCenterTab(activeTab, "skills", "Skills")}</div>`;
+  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "overview", "Visão Geral")}${aiCenterTab(activeTab, "memories", "Memórias")}${aiCenterTab(activeTab, "projects", "Projetos")}${aiCenterTab(activeTab, "logs", "Logs da IA")}${aiCenterTab(activeTab, "skills", "Skills")}${aiCenterTab(activeTab, "orchestrator", "Orchestrator")}</div>`;
 }
 
 function aiCenterParams(filters = {}) {
@@ -1170,6 +1170,26 @@ function aiCenterSkillsSection(skills = []) {
   return `<section class="card"><h3>Skills Engine</h3><div class="table-wrap"><table class="table"><thead><tr><th>Nome</th><th>Descrição</th><th>Versão</th><th>Permissões</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">Nenhuma skill registrada.</td></tr>'}</tbody></table></div></section>`;
 }
 
+function aiCenterOrchestratorSection(orchestratorStatus = {}, plans = []) {
+  const rows = plans.map((plan) => `<tr><td>${dateTime(plan.createdAt)}</td><td>${escapeHtml(plan.intent || "—")}</td><td>${escapeHtml(plan.projectKey || "associacoes")}</td><td>${Number((plan.steps || []).length)}</td><td>${badge(plan.status || "pending")}</td><td>${Number(plan.totalDurationMs || 0)}ms</td><td>${plan.success ? '<span class="os-badge os-badge-active">Sucesso</span>' : '<span class="os-badge os-badge-inactive">Falha/Pendente</span>'}</td><td><button class="button button-secondary button-sm" type="button" data-ai-orchestrator-plan='${escapeHtml(plan.id || "")}'>Ver plano</button></td></tr>`).join("");
+  return `<section class="metrics">${metric("Planos criados", Number(orchestratorStatus.totalPlans || 0))}${metric("Planos executados", Number(orchestratorStatus.executed || 0), "Execuções finalizadas", true)}${metric("Sucesso", Number(orchestratorStatus.successful || 0))}${metric("Falhas", Number(orchestratorStatus.failed || 0), "Execuções com erro", Number(orchestratorStatus.failed || 0) > 0)}${metric("Tempo médio", `${Math.round(Number(orchestratorStatus.avgDurationMs || 0))}ms`, "Planos executados")}</section><section class="card"><h3>Orchestrator Cognitivo</h3><div class="table-wrap"><table class="table"><thead><tr><th>Criado em</th><th>Intent</th><th>projectKey</th><th>Skills por plano</th><th>Status</th><th>Tempo total</th><th>Resultado</th><th>Ações</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="empty">Nenhum plano orquestrado encontrado.</td></tr>'}</tbody></table></div></section>`;
+}
+
+function bindAiCenterOrchestrator(plans = []) {
+  content().querySelectorAll("[data-ai-orchestrator-plan]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const plan = plans.find((item) => String(item.id) === String(button.dataset.aiOrchestratorPlan));
+      if (!plan) return;
+      openModal(
+        `Plano ${escapeHtml(plan.id || "")}`,
+        `<div class="detail-grid"><div class="detail-item"><small>Intent</small>${escapeHtml(plan.intent || "—")}</div><div class="detail-item"><small>Status</small>${badge(plan.status || "pending")}</div><div class="detail-item"><small>projectKey</small>${escapeHtml(plan.projectKey || "associacoes")}</div><div class="detail-item"><small>Tempo total</small>${Number(plan.totalDurationMs || 0)}ms</div><div class="detail-item span-2"><small>Pergunta</small>${escapeHtml(plan.question || "—")}</div><div class="detail-item span-2"><small>Steps</small><div class="ai-center-stack" style="margin-top:8px">${(plan.steps || []).map((step) => `<div class="ai-center-row"><div><strong>${escapeHtml(step.skill || "—")}</strong><small>${badge(step.status || "pending")}</small></div><span>${Number(step.durationMs || 0)}ms</span></div>`).join("") || '<div class="empty ai-empty">Sem steps.</div>'}</div></div></div>`,
+        null,
+        "Fechar"
+      );
+    });
+  });
+}
+
 function bindAiCenterMemories(memories = []) {
   content().querySelector("[data-ai-memory-create]")?.addEventListener("click", () => openAiCenterMemoryModal());
   content().querySelector("[data-ai-memory-filter-apply]")?.addEventListener("click", async () => {
@@ -1209,7 +1229,7 @@ function bindAiCenterMemories(memories = []) {
 
 async function renderAiCenter() {
   const activeTab = state.aiCenter.tab || "overview";
-  const [stats, assistantHistory, agentStatus, activityStats, activityLogsResult, memoriesResult, skillsResult] = await Promise.all([
+  const [stats, assistantHistory, agentStatus, activityStats, activityLogsResult, memoriesResult, skillsResult, orchestratorStatus, orchestratorPlansResult] = await Promise.all([
     api("/api/memory/stats"),
     api("/api/ai/assistant/history?limit=20").catch(() => ({ ok: false, conversations: [] })),
     api("/api/agents/status").catch(() => ({ ok: false, supervisor: { status: "offline", version: "-" }, agents: [] })),
@@ -1222,7 +1242,13 @@ async function renderAiCenter() {
       : Promise.resolve({ memories: [] }),
     activeTab === "skills"
       ? api("/api/ai/skills")
-      : Promise.resolve({ skills: [] })
+      : Promise.resolve({ skills: [] }),
+    activeTab === "orchestrator"
+      ? api("/api/ai/orchestrator/status")
+      : Promise.resolve({ totalPlans: 0, executed: 0, successful: 0, failed: 0, avgDurationMs: 0 }),
+    activeTab === "orchestrator"
+      ? api("/api/ai/orchestrator/plans?limit=50")
+      : Promise.resolve({ plans: [] })
   ]);
 
   let tabHtml = "";
@@ -1234,6 +1260,8 @@ async function renderAiCenter() {
     tabHtml = aiCenterLogsSection(activityLogsResult.logs || []);
   } else if (activeTab === "skills") {
     tabHtml = aiCenterSkillsSection(skillsResult.skills || []);
+  } else if (activeTab === "orchestrator") {
+    tabHtml = aiCenterOrchestratorSection(orchestratorStatus || {}, orchestratorPlansResult.plans || []);
   } else {
     tabHtml = aiCenterOverviewSection({ stats, assistantHistory, agentStatus, activityStats });
   }
@@ -1249,6 +1277,7 @@ async function renderAiCenter() {
 
   if (activeTab === "memories") bindAiCenterMemories(memoriesResult.memories || []);
   if (activeTab === "logs") bindAiCenterLogs(activityLogsResult.logs || []);
+  if (activeTab === "orchestrator") bindAiCenterOrchestrator(orchestratorPlansResult.plans || []);
   if (activeTab === "projects") {
     content().querySelectorAll("[data-ai-project-open]").forEach((button) => {
       button.addEventListener("click", () => {
