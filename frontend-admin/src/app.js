@@ -23,6 +23,7 @@ const state = {
   aiThinking: false,
   aiCenter: {
     tab: "overview",
+    selectedProject: "",
     filters: {
       projectKey: "",
       scope: "",
@@ -990,6 +991,16 @@ async function renderIaConfiguracoes() {
 
 const AI_CENTER_PROJECT_KEYS = ["associacoes", "xpdcnet", "chatbot-dcinfinity", "dcnet-palpites", "workponto", "nexora-financeiro", "guardian"];
 const AI_CENTER_SCOPES = ["global", "organization", "financial", "projects", "assets", "protocols", "workflow", "bi", "notifications", "subscription", "custom"];
+const AI_CENTER_DOMAINS = [
+  { key: "memory", title: "Cognitive Memory", description: "Memória viva por tenant, projeto e contexto.", available: true },
+  { key: "projects", title: "Projects", description: "Visão de projeto com contexto da IA.", available: true },
+  { key: "agents", title: "Agents", description: "Orquestração e desempenho de agentes especializados.", available: false },
+  { key: "runtime", title: "Runtime", description: "Saúde operacional e ciclo de execução da IA.", available: false },
+  { key: "automations", title: "Automations", description: "Regras e fluxos inteligentes com governança.", available: false },
+  { key: "logs", title: "Logs", description: "Teleria operacional, auditoria e rastreabilidade.", available: true },
+  { key: "permissions", title: "Permissions", description: "Controle de acesso por tenant, papel e módulo.", available: false },
+  { key: "knowledge", title: "Knowledge", description: "Base de conhecimento e políticas da organização.", available: false }
+];
 
 function aiCenterTab(activeTab, key, label) {
   return `<button class="tab ${activeTab === key ? "active" : ""}" type="button" data-ai-center-tab="${key}">${label}</button>`;
@@ -1037,7 +1048,7 @@ function aiCenterOverviewSection({ stats, assistantHistory, agentStatus }) {
     ? `${escapeHtml(lastContext.projectKey)} • ${lastContext.memories.length} memória(s) • ${dateTime(lastContext.at)}`
     : "Nenhum contexto encontrado ainda.";
 
-  return `<section class="metrics">${metric("Total de memórias", Number(stats.total || 0), "Tenant atual", true)}${metric("Projetos com memória", withMemoryCount, "projectKeys com dados")}${metric("Memórias recentes", recent.length, "Últimas entradas", true)}${metric("Status da IA", iaOnline ? "Online" : "Offline", agentStatus.supervisor?.version || "sem versão")}${metric("Último contexto do Assistant", lastContext ? escapeHtml(lastContext.projectKey) : "—", lastContext ? dateTime(lastContext.at) : "Sem histórico", true)}</section><section class="grid-2" style="margin-top:14px"><article class="card"><h3>Memórias por projectKey</h3><div class="ai-center-stack">${byProject.map((item) => `<div class="ai-center-row"><span>${escapeHtml(item.projectKey || "associacoes")}</span><strong>${Number(item.total || 0)}</strong></div>`).join("") || '<div class="empty ai-empty">Nenhuma memória registrada.</div>'}</div></article><article class="card"><h3>Memórias recentes</h3><div class="ai-center-stack">${recent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.projectKey || "associacoes")} • ${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias recentes.</div>'}</div></article></section><section class="card" style="margin-top:14px"><h3>Último contexto usado pelo Assistant</h3><p>${lastContextText}</p></section>`;
+  return `<section class="card ai-control-center-hero"><small>NEXORA Control Center</small><h2>Centro de governança da IA, memórias, projetos, agentes e automações do ecossistema NEXORA.</h2><p>Arquitetura visual preparada para evolução do AI Center MVP para o painel central do NEXORA OS.</p></section><section class="metrics">${metric("Total de memórias", Number(stats.total || 0), "Tenant atual", true)}${metric("Projetos com memória", withMemoryCount, "projectKeys com dados")}${metric("Memórias recentes", recent.length, "Últimas entradas", true)}${metric("Status da IA", iaOnline ? "Online" : "Offline", agentStatus.supervisor?.version || "sem versão")}${metric("Último contexto do Assistant", lastContext ? escapeHtml(lastContext.projectKey) : "—", lastContext ? dateTime(lastContext.at) : "Sem histórico", true)}</section><section class="ai-control-modules">${AI_CENTER_DOMAINS.map((item) => `<article class="card ai-control-module ${item.available ? "is-live" : "is-soon"}"><header><h3>${item.title}</h3>${item.available ? '<span class="os-badge os-badge-active">Ativo</span>' : '<span class="os-badge os-badge-inactive">Em breve</span>'}</header><p>${item.description}</p></article>`).join("")}</section><section class="grid-2" style="margin-top:14px"><article class="card"><h3>Memórias por projectKey</h3><div class="ai-center-stack">${byProject.map((item) => `<div class="ai-center-row"><span>${escapeHtml(item.projectKey || "associacoes")}</span><strong>${Number(item.total || 0)}</strong></div>`).join("") || '<div class="empty ai-empty">Nenhuma memória registrada.</div>'}</div></article><article class="card"><h3>Memórias recentes</h3><div class="ai-center-stack">${recent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.projectKey || "associacoes")} • ${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias recentes.</div>'}</div></article></section><section class="card" style="margin-top:14px"><h3>Último contexto usado pelo Assistant</h3><p>${lastContextText}</p></section>`;
 }
 
 function aiCenterMemoryTable(memories = []) {
@@ -1091,8 +1102,21 @@ function aiCenterProjectsSection(stats = {}) {
   return `<section class="grid-2">${AI_CENTER_PROJECT_KEYS.map((projectKey) => {
     const total = byProject.get(projectKey) || 0;
     const projectRecent = recent.filter((item) => String(item.projectKey || "associacoes") === projectKey).slice(0, 3);
-    return `<article class="card ai-center-project-card"><header><div><small>Projeto</small><h3>${escapeHtml(projectKey)}</h3></div>${badge("active")}</header><div class="detail-item" style="margin:10px 0 12px"><small>Quantidade de memórias</small><strong>${total}</strong></div><div class="ai-center-stack">${projectRecent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias recentes.</div>'}</div></article>`;
+    return `<article class="card ai-center-project-card" data-ai-project="${projectKey}"><header><div><small>Projeto</small><h3>${escapeHtml(projectKey)}</h3></div>${badge("active")}</header><div class="detail-item" style="margin:10px 0 12px"><small>Quantidade de memórias</small><strong>${total}</strong></div><div class="ai-center-stack">${projectRecent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias recentes.</div>'}</div><div class="actions" style="margin-top:12px"><button class="button button-secondary button-sm" type="button" data-ai-project-open="${projectKey}">Abrir visão do projeto</button></div></article>`;
   }).join("")}</section>`;
+}
+
+function openAiCenterProjectView(projectKey, stats = {}) {
+  const byProject = new Map((stats.byProject || []).map((item) => [String(item.projectKey), Number(item.total || 0)]));
+  const recent = (stats.recent || []).filter((item) => String(item.projectKey || "associacoes") === projectKey).slice(0, 8);
+  const memoryCount = byProject.get(projectKey) || 0;
+
+  openModal(
+    `Projeto • ${projectKey}`,
+    `<div class="detail-grid"><div class="detail-item"><small>Memórias do projeto</small><strong>${memoryCount}</strong></div><div class="detail-item"><small>Agentes do projeto</small><strong>Em breve</strong></div><div class="detail-item"><small>Logs do projeto</small><strong>Em breve</strong></div><div class="detail-item"><small>Configurações do projeto</small><strong>Em breve</strong></div><div class="detail-item span-2"><small>Últimas memórias</small><div class="ai-center-stack" style="margin-top:8px">${recent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias para este projeto.</div>'}</div></div><div class="detail-item span-2"><small>Visão futura</small>Painel preparado para incluir agentes, logs e configurações por projeto sem quebrar o MVP atual.</div></div>`,
+    null,
+    "Fechar"
+  );
 }
 
 function aiCenterLogsSection({ assistantHistory, agentLogs }) {
@@ -1178,6 +1202,16 @@ async function renderAiCenter() {
   });
 
   if (activeTab === "memories") bindAiCenterMemories(memoriesResult.memories || []);
+  if (activeTab === "projects") {
+    content().querySelectorAll("[data-ai-project-open]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const projectKey = String(button.dataset.aiProjectOpen || "").trim();
+        if (!projectKey) return;
+        state.aiCenter.selectedProject = projectKey;
+        openAiCenterProjectView(projectKey, stats);
+      });
+    });
+  }
 }
 
 async function renderNotificationsRoute() {
