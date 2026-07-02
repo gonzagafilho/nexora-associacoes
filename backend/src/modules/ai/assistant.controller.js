@@ -5,6 +5,7 @@ const { identifyIntent } = require("../../services/ai/aiIntentService");
 const { buildPlan, applyAnswerToPayload, confirmationText } = require("../../services/ai/aiPlannerService");
 const { executeAction } = require("../../services/ai/aiExecutionService");
 const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher");
+const { supervisor: agentSupervisor } = require("../../agents");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -133,8 +134,11 @@ async function askAssistant(req, res) {
     });
 
     if (intentInfo.type === "query") {
-      const query = await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
-      await appendMessagesSafe({ conversation, incoming: text, outgoing: query.answer, meta: { outgoing: { intent: query.intent, module: intentInfo.module } } });
+      const supervised = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id });
+      const query = supervised.agentsUsed?.length
+        ? { ok: true, intent: intentInfo.intent, answer: supervised.answer, data: supervised.data, agentsUsed: supervised.agentsUsed, supervisor: true }
+        : await answerQuestion({ tenantId: req.user.tenantId, userId: req.user.id, question: text });
+      await appendMessagesSafe({ conversation, incoming: text, outgoing: query.answer, meta: { outgoing: { intent: query.intent, module: intentInfo.module, agentsUsed: query.agentsUsed || [], supervisor: Boolean(query.supervisor) } } });
       await updateConversationStateSafe(conversation, {
         intent: query.intent,
         module: intentInfo.module,
@@ -142,7 +146,7 @@ async function askAssistant(req, res) {
         execution: { action: "", requiredConfirmation: false, confirmed: false, plan: null, payload: null, result: null },
         responseTime: Date.now() - startedAt
       });
-      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: query.intent, module: intentInfo.module, answer: query.answer, data: query.data });
+      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: query.intent, module: intentInfo.module, answer: query.answer, data: query.data, agentsUsed: query.agentsUsed || [], supervisor: Boolean(query.supervisor) });
     }
 
     if (intentInfo.type === "action") {
@@ -294,6 +298,19 @@ async function askAssistant(req, res) {
         plan,
         action: route ? { type: "navigate", route } : undefined
       });
+    }
+
+    const supervisedFallback = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id });
+    if (supervisedFallback.agentsUsed?.length) {
+      await appendMessagesSafe({ conversation, incoming: text, outgoing: supervisedFallback.answer, meta: { outgoing: { intent: "agent_supervisor", module: "NEXORA IA", agentsUsed: supervisedFallback.agentsUsed, supervisor: true } } });
+      await updateConversationStateSafe(conversation, {
+        intent: "agent_supervisor",
+        module: "NEXORA IA",
+        status: "open",
+        responseTime: Date.now() - startedAt,
+        execution: { action: "", requiredConfirmation: false, confirmed: false, plan: null, payload: null, result: null }
+      });
+      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: "agent_supervisor", module: "NEXORA IA", answer: supervisedFallback.answer, data: supervisedFallback.data, agentsUsed: supervisedFallback.agentsUsed, supervisor: true });
     }
 
     const fallbackAnswer = "Posso ajudar com comandos como: cadastrar associado, cadastrar despesa, abrir financeiro, consultar saldo.";

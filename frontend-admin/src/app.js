@@ -695,22 +695,48 @@ async function askNexoraIa(question) {
     setNexoraIaThinking(false);
   }
 }
+function renderAiAgentsSection(status = {}) {
+  const agents = Array.isArray(status.agents) ? status.agents : [];
+  const totals = agents.reduce((acc, item) => {
+    acc.executions += Number(item.metrics?.totalExecutions || 0);
+    acc.failures += Number(item.metrics?.failedExecutions || 0);
+    acc.latency += Number(item.metrics?.averageLatencyMs || 0);
+    return acc;
+  }, { executions: 0, failures: 0, latency: 0 });
+  const avgLatency = agents.length ? Math.round(totals.latency / agents.length) : 0;
+  return `<section class="card ai-agents-section"><header class="event-engine-head"><div><small>AI Agents</small><h3>Supervisor multiagente</h3></div><button class="button button-primary button-sm" type="button" data-test-agent-supervisor>Testar Supervisor</button></header><section class="metrics" style="margin:12px 0 16px">${metric("Supervisor", status.supervisor?.status || "online", "v3.6.0", true)}${metric("Agentes ativos", agents.filter((item) => item.enabled).length)}${metric("Execuções", totals.executions, "Total")}${metric("Falhas", totals.failures)}${metric("Latência média", `${avgLatency}ms`, "Por agente", true)}</section><div class="table-wrap"><table class="table"><thead><tr><th>Agent</th><th>Módulo</th><th>Status</th><th>Capabilities</th><th>Execuções</th><th>Falhas</th><th>Latência</th></tr></thead><tbody>${agents.map((item) => `<tr><td><div class="cell-title">${escapeHtml(item.name || item.id)}</div><div class="cell-sub">${escapeHtml(item.id)}</div></td><td>${escapeHtml(item.module || "core")}</td><td>${badge(item.enabled ? "active" : "inactive")}</td><td>${escapeHtml((item.capabilities || []).slice(0, 5).join(", "))}</td><td>${Number(item.metrics?.totalExecutions || 0)}</td><td>${Number(item.metrics?.failedExecutions || 0)}</td><td>${Number(item.metrics?.averageLatencyMs || 0)}ms</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nenhum agente registrado.</td></tr>`}</tbody></table></div><div class="ai-history" data-agent-supervisor-result style="margin-top:12px"></div></section>`;
+}
+async function testAgentSupervisor() {
+  const host = content().querySelector("[data-agent-supervisor-result]");
+  if (host) host.innerHTML = `<div class="ai-thinking"><span></span>Supervisor analisando...</div>`;
+  try {
+    const result = await api("/api/agents/supervisor", { method: "POST", body: JSON.stringify({ question: "Como está minha empresa?" }) });
+    if (host) host.innerHTML = `<article class="ai-history-item"><header><div class="ai-history-module"><span>AI</span><strong>Supervisor</strong></div><small>${escapeHtml((result.agentsUsed || []).join(", ") || "sem agentes")}</small></header><div class="ai-qa answer"><small>Resposta consolidada</small><p>${escapeHtml(result.answer || "Sem resposta.")}</p></div></article>`;
+    toast("Supervisor testado.");
+  } catch (error) {
+    if (host) host.innerHTML = `<div class="empty ai-empty">${escapeHtml(error.message)}</div>`;
+    toast(error.message, true);
+  }
+}
 async function renderIntelligence() {
   persistAiConversation();
   const [bi, aiContext] = await Promise.all([api("/api/bi/executive"), api("/api/ai/context")]);
   const data = bi.data || aiContext.context || {};
   content().innerHTML = `${pageHead("🧠 NEXORA IA", "Seu assistente inteligente de gestão.")}<section class="nexora-ai-hero"><div class="nexora-ai-orbit"><img src="${NEXORA_IA_AVATAR}" alt="NEXORA IA"></div><div><h2>🧠 NEXORA IA</h2><p class="nexora-ai-subtitle">Seu assistente inteligente de gestão.</p><div class="nexora-ai-copy"><p>Olá!</p><p>Sou a NEXORA IA.</p><p>Estou integrada ao seu ambiente e conheço apenas os dados da sua empresa.</p><p>Posso ajudar você a analisar indicadores, localizar informações, responder dúvidas sobre o financeiro, associados, projetos, patrimônio, protocolos e muito mais.</p><p>Nas próximas versões também executarei tarefas mediante sua confirmação.</p></div></div></section>${executiveCards(data)}<section class="nexora-ai-shortcuts"><header><h3>Atalhos rápidos</h3><small>Escolha um tema para a NEXORA IA analisar agora.</small></header><div>${NEXORA_IA_QUICK_ACTIONS.map((item) => `<button class="ai-shortcut" type="button" data-ai-question="${escapeHtml(item.question)}"><span>${item.icon}</span><strong>${escapeHtml(item.label)}</strong></button>`).join("")}</div></section><section class="intelligence-grid"><article class="card ai-console"><header class="ai-console-head"><div><h3>Conversa com a NEXORA IA</h3><p>Respostas objetivas, profissionais e baseadas nos dados reais deste tenant.</p></div><button class="button button-ghost button-sm" data-clear-ai>Limpar histórico</button></header><div class="ai-thinking" data-ai-thinking hidden><span></span>NEXORA IA está analisando...</div><form class="ai-form" data-ai-form><input class="input" name="question" placeholder="Pergunte qualquer coisa para a NEXORA IA..." autocomplete="off" required><button class="button button-primary" type="submit" data-ai-submit>Enviar</button></form><div class="ai-examples">${NEXORA_IA_EXAMPLES.map((example) => `<button type="button" data-ai-question="${escapeHtml(example)}">${escapeHtml(example)}</button>`).join("")}</div><div class="ai-history" data-ai-history>${renderAiHistory()}</div></article><article class="card nexora-ai-future"><h3>NEXORA IA oficial</h3><p>A arquitetura já fica preparada para novos assistentes por domínio.</p><div class="future-modules">${NEXORA_IA_FUTURE_MODULES.map((item) => `<span>NEXORA IA ${escapeHtml(item)}</span>`).join("")}</div><div class="report-list intelligence-list"><h3>Projetos atrasados</h3>${(data.listas?.projetosAtrasados || []).map((item) => `<div class="report-row"><div><span>${escapeHtml(item.name)}</span><small>${date(item.endDate)}</small></div><strong>${badge(item.status)}</strong></div>`).join("") || `<div class="empty ai-empty">Nenhum projeto atrasado.</div>`}</div></article></section>`;
 
-  const [systemOs, eventDashboard, eventList, runtimeInspector, runtimeHealth] = await Promise.all([
+  const [systemOs, eventDashboard, eventList, runtimeInspector, runtimeHealth, agentStatus] = await Promise.all([
     api("/api/system/os"),
     api("/api/system/events/dashboard"),
     api("/api/system/events?limit=12"),
     api("/api/system/runtime/inspector"),
-    api("/api/system/runtime/health")
+    api("/api/system/runtime/health"),
+    api("/api/agents/status")
   ]);
+  content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderAiAgentsSection(agentStatus));
   content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderRuntimeInspectorSection(runtimeInspector, runtimeHealth));
   content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderEventEngineSection(eventDashboard, eventList.items || []));
   content().querySelector(".nexora-ai-shortcuts")?.insertAdjacentHTML("beforebegin", renderSystemOsSection(systemOs));
+  content().querySelector("[data-test-agent-supervisor]")?.addEventListener("click", testAgentSupervisor);
   content().querySelector("[data-clear-ai]")?.addEventListener("click", () => {
     state.aiConversation = [];
     state.aiConversationId = "";
