@@ -8,6 +8,7 @@ const { buildEventContext, publishOsEvent } = require("../../os/osEventPublisher
 const { supervisor: agentSupervisor } = require("../../agents");
 const { buildCopilotMemoryContext } = require("../copilot");
 const { normalizeProjectKey } = require("../memory/memory.service");
+const aiActivityLogService = require("./aiActivityLog.service");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -75,6 +76,60 @@ async function updateConversationStateSafe(conversation, state) {
   }
 }
 
+function safeProjectKey(value) {
+  try {
+    return normalizeProjectKey(value);
+  } catch (_error) {
+    return "associacoes";
+  }
+}
+
+function extractMemoryIds(memoryContext = {}) {
+  const memories = Array.isArray(memoryContext.memories) ? memoryContext.memories : [];
+  return memories
+    .map((item) => String(item?.id || item?._id || "").trim())
+    .filter(Boolean)
+    .slice(0, 100);
+}
+
+function buildMemoryContextPreview(memoryContext = {}) {
+  const promptContext = String(memoryContext.promptContext || "").trim();
+  if (promptContext) return promptContext.slice(0, 1000);
+  const titles = (Array.isArray(memoryContext.memories) ? memoryContext.memories : [])
+    .map((item) => String(item?.title || item?.content || "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  return titles.join(" | ").slice(0, 1000);
+}
+
+async function logActivitySafe(payload = {}) {
+  try {
+    await aiActivityLogService.createActivityLog(payload);
+  } catch (_error) {
+    // never break assistant flow because of logging
+  }
+}
+
+async function respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module, action, answer, metadata, payload }) {
+  await logActivitySafe({
+    tenantId: req.user.tenantId,
+    userId: req.user.id,
+    projectKey,
+    module: module || "NEXORA IA",
+    action: action || "assistant.message",
+    question: text,
+    answer: answer || "",
+    memoryIds: extractMemoryIds(memoryContext),
+    memoryCount: Array.isArray(memoryContext?.memories) ? memoryContext.memories.length : 0,
+    memoryContextPreview: buildMemoryContextPreview(memoryContext),
+    status: "success",
+    errorMessage: "",
+    durationMs: Date.now() - startedAt,
+    metadata: metadata && typeof metadata === "object" ? metadata : {}
+  });
+  return res.json(payload);
+}
+
 async function getContext(req, res) {
   try {
     const context = await buildSmartContext({
@@ -115,14 +170,35 @@ async function getHistory(req, res) {
 
 async function askAssistant(req, res) {
   const startedAt = Date.now();
+  let text = "";
+  let projectKey = safeProjectKey(req.body?.projectKey);
+  let memoryContext = { projectKey, memories: [], promptContext: "" };
 
   try {
-    const text = String(req.body?.message || req.body?.question || "").trim();
-    if (!text) return res.status(400).json({ ok: false, message: "Pergunta não informada." });
+    text = String(req.body?.message || req.body?.question || "").trim();
+    if (!text) {
+      await logActivitySafe({
+        tenantId: req.user.tenantId,
+        userId: req.user.id,
+        projectKey,
+        module: "NEXORA IA",
+        action: "assistant.message",
+        question: "",
+        answer: "",
+        memoryIds: [],
+        memoryCount: 0,
+        memoryContextPreview: "",
+        status: "error",
+        errorMessage: "Pergunta não informada.",
+        durationMs: Date.now() - startedAt,
+        metadata: { endpoint: "/api/ai/assistant/message" }
+      });
+      return res.status(400).json({ ok: false, message: "Pergunta não informada." });
+    }
 
-    const projectKey = requestProjectKey(req);
+    projectKey = requestProjectKey(req);
 
-    const memoryContext = await buildMemoryContextSafe({ tenantId: req.user.tenantId, projectKey, question: text });
+    memoryContext = await buildMemoryContextSafe({ tenantId: req.user.tenantId, projectKey, question: text });
 
     const conversation = await resolveConversationSafe({
       tenantId: req.user.tenantId,
@@ -168,7 +244,20 @@ async function askAssistant(req, res) {
         execution: { action: "", requiredConfirmation: false, confirmed: false, plan: null, payload: null, result: null },
         responseTime: Date.now() - startedAt
       });
-      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: query.intent, module: intentInfo.module, answer: query.answer, data: query.data, agentsUsed: query.agentsUsed || [], supervisor: Boolean(query.supervisor) });
+      const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: query.intent, module: intentInfo.module, answer: query.answer, data: query.data, agentsUsed: query.agentsUsed || [], supervisor: Boolean(query.supervisor) };
+      return respondAssistantSuccess({
+        req,
+        res,
+        startedAt,
+        text,
+        projectKey,
+        memoryContext,
+        module: intentInfo.module,
+        action: query.intent,
+        answer: query.answer,
+        metadata: { conversationId: conversation?.conversationId, intentType: intentInfo.type, supervisor: Boolean(query.supervisor) },
+        payload: responsePayload
+      });
     }
 
     if (intentInfo.type === "action") {
@@ -194,7 +283,8 @@ async function askAssistant(req, res) {
           },
           responseTime: Date.now() - startedAt
         });
-        return res.json({ ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: intentInfo.module, answer: responseText, action: { type: "navigate", route } });
+        const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: intentInfo.module, answer: responseText, action: { type: "navigate", route } };
+        return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: intentInfo.module, action: intentInfo.intent, answer: responseText, metadata: { conversationId: conversation?.conversationId, route, intentType: intentInfo.type }, payload: responsePayload });
       }
 
       if (conversation.status === "awaiting_confirmation") {
@@ -239,7 +329,8 @@ async function askAssistant(req, res) {
               ok: execution.ok
             }
           });
-          return res.json({ ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer, execution });
+          const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer, execution };
+          return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: conversation?.module || plan.module, action: intentInfo.intent, answer, metadata: { conversationId: conversation?.conversationId, executionStatus: execution.status }, payload: responsePayload });
         }
 
         if (deniedConfirmation(text)) {
@@ -254,13 +345,15 @@ async function askAssistant(req, res) {
               result: { cancelled: true }
             }
           });
-          return res.json({ ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer });
+          const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer };
+          return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: conversation?.module || plan.module, action: intentInfo.intent, answer, metadata: { conversationId: conversation?.conversationId, cancelled: true }, payload: responsePayload });
         }
 
         const remind = "Por segurança, responda com 'sim' para confirmar ou 'não' para cancelar.";
         await appendMessagesSafe({ conversation, incoming: text, outgoing: remind });
         await updateConversationStateSafe(conversation, { responseTime: Date.now() - startedAt });
-        return res.json({ ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer: remind });
+        const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: conversation?.module || plan.module, answer: remind };
+        return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: conversation?.module || plan.module, action: intentInfo.intent, answer: remind, metadata: { conversationId: conversation?.conversationId, awaitingConfirmation: true }, payload: responsePayload });
       }
 
       if (plan.missingFields.length) {
@@ -279,7 +372,8 @@ async function askAssistant(req, res) {
             result: null
           }
         });
-        return res.json({ ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: plan.module, answer: plan.nextQuestion, pending: true, plan });
+        const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: intentInfo.intent, module: plan.module, answer: plan.nextQuestion, pending: true, plan };
+        return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: plan.module, action: intentInfo.intent, answer: plan.nextQuestion, metadata: { conversationId: conversation?.conversationId, pending: true }, payload: responsePayload });
       }
 
       const confirmation = confirmationText(plan);
@@ -310,7 +404,7 @@ async function askAssistant(req, res) {
         }
       });
 
-      return res.json({
+      const responsePayload = {
         ok: true,
         conversationId: conversation?.conversationId,
         intent: intentInfo.intent,
@@ -319,7 +413,8 @@ async function askAssistant(req, res) {
         requiresConfirmation: true,
         plan,
         action: route ? { type: "navigate", route } : undefined
-      });
+      };
+      return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: plan.module, action: intentInfo.intent, answer: confirmation, metadata: { conversationId: conversation?.conversationId, requiresConfirmation: true }, payload: responsePayload });
     }
 
     const supervisedFallback = await agentSupervisor.execute(text, { tenantId: req.user.tenantId, userId: req.user.id, projectKey, memoryContext });
@@ -332,7 +427,8 @@ async function askAssistant(req, res) {
         responseTime: Date.now() - startedAt,
         execution: { action: "", requiredConfirmation: false, confirmed: false, plan: null, payload: null, result: null }
       });
-      return res.json({ ok: true, conversationId: conversation?.conversationId, intent: "agent_supervisor", module: "NEXORA IA", answer: supervisedFallback.answer, data: { ...(supervisedFallback.data || {}), memoryContext }, agentsUsed: supervisedFallback.agentsUsed, supervisor: true });
+      const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: "agent_supervisor", module: "NEXORA IA", answer: supervisedFallback.answer, data: { ...(supervisedFallback.data || {}), memoryContext }, agentsUsed: supervisedFallback.agentsUsed, supervisor: true };
+      return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: "NEXORA IA", action: "agent_supervisor", answer: supervisedFallback.answer, metadata: { conversationId: conversation?.conversationId, supervisor: true }, payload: responsePayload });
     }
 
     const fallbackAnswer = "Posso ajudar com comandos como: cadastrar associado, cadastrar despesa, abrir financeiro, consultar saldo.";
@@ -344,8 +440,25 @@ async function askAssistant(req, res) {
       responseTime: Date.now() - startedAt
     });
 
-    return res.json({ ok: true, conversationId: conversation?.conversationId, intent: "unknown", module: "NEXORA IA", answer: fallbackAnswer });
+    const responsePayload = { ok: true, conversationId: conversation?.conversationId, intent: "unknown", module: "NEXORA IA", answer: fallbackAnswer };
+    return respondAssistantSuccess({ req, res, startedAt, text, projectKey, memoryContext, module: "NEXORA IA", action: "unknown", answer: fallbackAnswer, metadata: { conversationId: conversation?.conversationId }, payload: responsePayload });
   } catch (error) {
+    await logActivitySafe({
+      tenantId: req.user.tenantId,
+      userId: req.user.id,
+      projectKey,
+      module: "NEXORA IA",
+      action: "assistant.message",
+      question: text,
+      answer: "",
+      memoryIds: extractMemoryIds(memoryContext),
+      memoryCount: Array.isArray(memoryContext?.memories) ? memoryContext.memories.length : 0,
+      memoryContextPreview: buildMemoryContextPreview(memoryContext),
+      status: "error",
+      errorMessage: error.message || "Erro ao processar mensagem da NEXORA IA.",
+      durationMs: Date.now() - startedAt,
+      metadata: { endpoint: "/api/ai/assistant/message" }
+    });
     console.error("[ai:assistant:message]", error.message);
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao processar mensagem da NEXORA IA." });
   }
