@@ -19,10 +19,22 @@ async function create(req, res) {
 
 async function list(req, res) {
   try {
-    const memories = await memoryService.listMemories({ tenantId: req.user.tenantId, projectKey: queryProjectKey(req), query: req.query || {} });
+    const query = req.query || {};
+    const memories = query.q
+      ? await memoryService.searchMemories({ tenantId: req.user.tenantId, projectKey: queryProjectKey(req), q: query.q, query })
+      : await memoryService.listMemories({ tenantId: req.user.tenantId, projectKey: queryProjectKey(req), query });
     return res.json({ ok: true, memories });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao listar memórias." });
+  }
+}
+
+async function stats(req, res) {
+  try {
+    const statsData = await memoryService.getMemoryStats({ tenantId: req.user.tenantId, projectKey: queryProjectKey(req) });
+    return res.json({ ok: true, ...statsData });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao carregar resumo de memórias." });
   }
 }
 
@@ -68,6 +80,7 @@ async function remove(req, res) {
 module.exports = {
   create,
   list,
+  stats,
   search,
   getById,
   update,

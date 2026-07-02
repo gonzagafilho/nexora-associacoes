@@ -43,14 +43,16 @@ function projectMemoryClause(projectKey) {
 }
 
 function tenantProjectFilter(tenantId, projectKey) {
-  return {
-    tenantId,
-    $and: [projectMemoryClause(normalizeProjectKey(projectKey))]
-  };
+  const filter = { tenantId };
+  if (projectKey !== undefined && projectKey !== null && String(projectKey).trim() !== "") {
+    filter.$and = [projectMemoryClause(normalizeProjectKey(projectKey))];
+  }
+  return filter;
 }
 
 function activeMemoryFilter(tenantId, projectKey) {
   const filter = tenantProjectFilter(tenantId, projectKey);
+  filter.$and = filter.$and || [];
   filter.$and.push({
     $or: [
       { expiresAt: null },
@@ -158,14 +160,18 @@ async function createMemory({ tenantId, userId, projectKey, data }) {
 }
 
 async function listMemories({ tenantId, projectKey, query = {} }) {
-  const resolvedProjectKey = normalizeProjectKey(projectKey || query.projectKey);
+  const requestedProjectKey = projectKey !== undefined ? projectKey : query.projectKey;
+  const useAllProjects = requestedProjectKey === undefined || requestedProjectKey === null || String(requestedProjectKey).trim() === "" || String(requestedProjectKey).trim().toLowerCase() === "all";
+  const resolvedProjectKey = useAllProjects ? null : normalizeProjectKey(requestedProjectKey);
   const limit = Math.min(Math.max(Number(query.limit || 50), 1), 200);
   const memories = await TenantMemory.find(buildListFilter({ tenantId, ...query, projectKey: resolvedProjectKey })).sort({ importance: -1, createdAt: -1 }).limit(limit).lean();
   return memories.map(serialize);
 }
 
 async function searchMemories({ tenantId, projectKey, q = "", query = {} }) {
-  const resolvedProjectKey = normalizeProjectKey(projectKey || query.projectKey);
+  const requestedProjectKey = projectKey !== undefined ? projectKey : query.projectKey;
+  const useAllProjects = requestedProjectKey === undefined || requestedProjectKey === null || String(requestedProjectKey).trim() === "" || String(requestedProjectKey).trim().toLowerCase() === "all";
+  const resolvedProjectKey = useAllProjects ? null : normalizeProjectKey(requestedProjectKey);
   const limit = Math.min(Math.max(Number(query.limit || 20), 1), 100);
   const memories = await TenantMemory.find(buildSearchFilter({ tenantId, projectKey: resolvedProjectKey, q, scope: query.scope, importance: query.importance }))
     .sort({ importance: -1, updatedAt: -1 })
@@ -196,6 +202,35 @@ async function deleteMemory({ tenantId, projectKey, id }) {
   return serialize(deleted);
 }
 
+async function getMemoryStats({ tenantId, projectKey }) {
+  const requestedProjectKey = projectKey;
+  const useAllProjects = requestedProjectKey === undefined || requestedProjectKey === null || String(requestedProjectKey).trim() === "" || String(requestedProjectKey).trim().toLowerCase() === "all";
+  const resolvedProjectKey = useAllProjects ? null : normalizeProjectKey(requestedProjectKey);
+  const baseFilter = activeMemoryFilter(tenantId, resolvedProjectKey);
+
+  const [total, byProjectRaw, byScopeRaw, recentRaw] = await Promise.all([
+    TenantMemory.countDocuments(baseFilter),
+    TenantMemory.aggregate([
+      { $match: baseFilter },
+      { $group: { _id: { $ifNull: ["$projectKey", DEFAULT_PROJECT_KEY] }, total: { $sum: 1 } } },
+      { $sort: { total: -1, _id: 1 } }
+    ]),
+    TenantMemory.aggregate([
+      { $match: baseFilter },
+      { $group: { _id: "$scope", total: { $sum: 1 } } },
+      { $sort: { total: -1, _id: 1 } }
+    ]),
+    TenantMemory.find(baseFilter).sort({ createdAt: -1 }).limit(10).lean()
+  ]);
+
+  return {
+    total: Number(total || 0),
+    byProject: byProjectRaw.map((item) => ({ projectKey: item?._id || DEFAULT_PROJECT_KEY, total: Number(item?.total || 0) })),
+    byScope: byScopeRaw.map((item) => ({ scope: item?._id || "organization", total: Number(item?.total || 0) })),
+    recent: recentRaw.map(serialize)
+  };
+}
+
 module.exports = {
   createMemory,
   listMemories,
@@ -203,6 +238,7 @@ module.exports = {
   getMemory,
   updateMemory,
   deleteMemory,
+  getMemoryStats,
   serialize,
   normalizeTags,
   normalizeProjectKey,

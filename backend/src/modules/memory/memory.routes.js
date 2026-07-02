@@ -9,6 +9,7 @@ router.use(auth);
 
 router.post("/", controller.create);
 router.get("/", controller.list);
+router.get("/stats", controller.stats);
 router.get("/search", controller.search);
 router.get("/:id", controller.getById);
 router.put("/:id", controller.update);

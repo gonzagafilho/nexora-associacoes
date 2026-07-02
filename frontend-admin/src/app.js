@@ -21,6 +21,16 @@ const state = {
   aiConversationId: localStorage.getItem("nexora_ai_conversation_id") || "",
   aiPendingAction: null,
   aiThinking: false,
+  aiCenter: {
+    tab: "overview",
+    filters: {
+      projectKey: "",
+      scope: "",
+      tag: "",
+      importance: "",
+      q: ""
+    }
+  },
   notifications: {
     open: false,
     unread: 0,
@@ -404,6 +414,7 @@ const navItems = [
   ["workflow-marketplace", "Workflow Studio • Marketplace", "workflow", "core"],
   ["workflow-logs", "Workflow Studio • Logs", "workflow", "core"],
   ["ia-chat", "🧠 NEXORA IA • Chat", "intelligence", "core"],
+  ["dashboard/ai-center", "NEXORA IA • AI Center", "intelligence", "core"],
   ["ia-historico", "NEXORA IA • Histórico", "intelligence", "core"],
   ["ia-sugestoes", "NEXORA IA • Sugestões", "intelligence", "core"],
   ["ia-bi", "NEXORA IA • BI Executivo", "intelligence", "core"],
@@ -448,7 +459,7 @@ function setRoute(route) { state.route = route; document.querySelectorAll(".nav-
 window.addEventListener("hashchange", async () => {
   if (!state.token) return;
   const rawTarget = location.hash.replace("#", "") || "dashboard";
-  const target = rawTarget === "inteligencia" ? "ia-chat" : rawTarget;
+  const target = rawTarget === "inteligencia" ? "ia-chat" : rawTarget === "admin/ai-center" ? "dashboard/ai-center" : rawTarget;
   const visibleRoutes = new Set(visibleNavItems().map(([route]) => route));
   setRoute(visibleRoutes.has(target) ? target : "dashboard");
   if (state.route === "dashboard" && target !== "dashboard") location.hash = "dashboard";
@@ -462,6 +473,7 @@ async function renderRoute() {
   loading();
   try {
     if (state.route === "inteligencia") state.route = "ia-chat";
+    if (state.route === "admin/ai-center") state.route = "dashboard/ai-center";
     const routes = {
       dashboard: renderDashboard,
       "workflow-dashboard": renderWorkflowDashboard,
@@ -471,6 +483,7 @@ async function renderRoute() {
       "workflow-marketplace": renderWorkflowMarketplace,
       "workflow-logs": renderWorkflowLogs,
       "ia-chat": renderIaChat,
+      "dashboard/ai-center": renderAiCenter,
       "ia-historico": renderIaHistorico,
       "ia-sugestoes": renderIaSugestoes,
       "ia-bi": renderIaBiExecutivo,
@@ -973,6 +986,198 @@ async function renderWorkflowLogs() {
 
 async function renderIaConfiguracoes() {
   content().innerHTML = `${pageHead("🧠 NEXORA IA • Configurações", "Preparação da arquitetura NEXORA OS.")}<section class="card"><p>Preparado para evolução futura:</p><div class="future-modules"><span>NEXORA Vision</span><span>NEXORA Voice</span><span>NEXORA OCR</span><span>NEXORA Analytics</span><span>NEXORA Forecast</span><span>NEXORA Agents</span></div><p style="margin-top:12px;color:var(--muted)">Sem implementação ativa nesta versão.</p></section>`;
+}
+
+const AI_CENTER_PROJECT_KEYS = ["associacoes", "xpdcnet", "chatbot-dcinfinity", "dcnet-palpites", "workponto", "nexora-financeiro", "guardian"];
+const AI_CENTER_SCOPES = ["global", "organization", "financial", "projects", "assets", "protocols", "workflow", "bi", "notifications", "subscription", "custom"];
+
+function aiCenterTab(activeTab, key, label) {
+  return `<button class="tab ${activeTab === key ? "active" : ""}" type="button" data-ai-center-tab="${key}">${label}</button>`;
+}
+
+function aiCenterTabs(activeTab) {
+  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "overview", "Visão Geral")}${aiCenterTab(activeTab, "memories", "Memórias")}${aiCenterTab(activeTab, "projects", "Projetos")}${aiCenterTab(activeTab, "logs", "Logs da IA")}</div>`;
+}
+
+function aiCenterParams(filters = {}) {
+  const params = new URLSearchParams();
+  ["projectKey", "scope", "tag", "importance", "q"].forEach((key) => {
+    const value = String(filters[key] || "").trim();
+    if (value) params.set(key, value);
+  });
+  params.set("limit", "50");
+  return params.toString();
+}
+
+function latestAssistantContext(conversations = []) {
+  for (const conversation of conversations) {
+    const messages = Array.isArray(conversation.messages) ? conversation.messages.slice().reverse() : [];
+    for (const message of messages) {
+      const context = message?.meta?.memoryContext;
+      if (context) {
+        return {
+          conversationId: conversation.conversationId,
+          at: message.at || conversation.updatedAt,
+          projectKey: context.projectKey || "associacoes",
+          memories: Array.isArray(context.memories) ? context.memories : []
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function aiCenterOverviewSection({ stats, assistantHistory, agentStatus }) {
+  const byProject = Array.isArray(stats.byProject) ? stats.byProject.slice(0, 6) : [];
+  const recent = Array.isArray(stats.recent) ? stats.recent.slice(0, 6) : [];
+  const withMemoryCount = byProject.filter((item) => Number(item.total || 0) > 0).length;
+  const lastContext = latestAssistantContext(assistantHistory.conversations || []);
+  const iaOnline = (agentStatus.supervisor?.status || "offline") === "online";
+  const lastContextText = lastContext
+    ? `${escapeHtml(lastContext.projectKey)} • ${lastContext.memories.length} memória(s) • ${dateTime(lastContext.at)}`
+    : "Nenhum contexto encontrado ainda.";
+
+  return `<section class="metrics">${metric("Total de memórias", Number(stats.total || 0), "Tenant atual", true)}${metric("Projetos com memória", withMemoryCount, "projectKeys com dados")}${metric("Memórias recentes", recent.length, "Últimas entradas", true)}${metric("Status da IA", iaOnline ? "Online" : "Offline", agentStatus.supervisor?.version || "sem versão")}${metric("Último contexto do Assistant", lastContext ? escapeHtml(lastContext.projectKey) : "—", lastContext ? dateTime(lastContext.at) : "Sem histórico", true)}</section><section class="grid-2" style="margin-top:14px"><article class="card"><h3>Memórias por projectKey</h3><div class="ai-center-stack">${byProject.map((item) => `<div class="ai-center-row"><span>${escapeHtml(item.projectKey || "associacoes")}</span><strong>${Number(item.total || 0)}</strong></div>`).join("") || '<div class="empty ai-empty">Nenhuma memória registrada.</div>'}</div></article><article class="card"><h3>Memórias recentes</h3><div class="ai-center-stack">${recent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.projectKey || "associacoes")} • ${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias recentes.</div>'}</div></article></section><section class="card" style="margin-top:14px"><h3>Último contexto usado pelo Assistant</h3><p>${lastContextText}</p></section>`;
+}
+
+function aiCenterMemoryTable(memories = []) {
+  if (!memories.length) return '<div class="card empty">Nenhuma memória encontrada para os filtros informados.</div>';
+  return `<div class="table-wrap"><table class="table"><thead><tr><th>Título</th><th>projectKey</th><th>Escopo</th><th>Tags</th><th>Importância</th><th>Data</th><th>Ações</th></tr></thead><tbody>${memories.map((memory) => `<tr><td><div class="cell-title">${escapeHtml(memory.title || "—")}</div><div class="cell-sub">${escapeHtml(String(memory.content || "").slice(0, 100))}</div></td><td>${escapeHtml(memory.projectKey || "associacoes")}</td><td>${escapeHtml(memory.scope || "organization")}</td><td>${escapeHtml((memory.tags || []).join(", ") || "—")}</td><td>${Number(memory.importance || 1)}</td><td>${dateTime(memory.updatedAt || memory.createdAt)}</td><td><div class="actions"><button class="button button-secondary button-sm" data-memory-view="${memory.id}">Ver</button><button class="button button-secondary button-sm" data-memory-edit="${memory.id}">Editar</button><button class="button button-danger button-sm" data-memory-delete="${memory.id}">Excluir</button></div></td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function openAiCenterMemoryDetails(memory) {
+  openModal("Detalhes da memória", `<div class="detail-grid"><div class="detail-item"><small>Título</small>${escapeHtml(memory.title || "—")}</div><div class="detail-item"><small>projectKey</small>${escapeHtml(memory.projectKey || "associacoes")}</div><div class="detail-item"><small>Escopo</small>${escapeHtml(memory.scope || "organization")}</div><div class="detail-item"><small>Importância</small>${Number(memory.importance || 1)}</div><div class="detail-item span-2"><small>Tags</small>${escapeHtml((memory.tags || []).join(", ") || "—")}</div><div class="detail-item span-2"><small>Conteúdo</small>${escapeHtml(memory.content || "")}</div><div class="detail-item"><small>Criação</small>${dateTime(memory.createdAt)}</div><div class="detail-item"><small>Atualização</small>${dateTime(memory.updatedAt)}</div></div>`, null, "Fechar");
+}
+
+function openAiCenterMemoryModal(memory = null) {
+  const isEdit = Boolean(memory?.id);
+  openModal(
+    isEdit ? "Editar memória" : "Criar memória",
+    `<form data-ai-memory-form><div class="form-grid"><label class="field"><span>projectKey</span><select class="select" name="projectKey" required>${AI_CENTER_PROJECT_KEYS.map((projectKey) => `<option value="${projectKey}" ${projectKey === (memory?.projectKey || "associacoes") ? "selected" : ""}>${projectKey}</option>`).join("")}</select></label><label class="field"><span>Escopo</span><select class="select" name="scope" required>${AI_CENTER_SCOPES.map((scope) => `<option value="${scope}" ${scope === (memory?.scope || "organization") ? "selected" : ""}>${scope}</option>`).join("")}</select></label>${field("title", "Título", memory?.title || "", "text", true)}${field("importance", "Importância (1-5)", memory?.importance || 1, "number", true, 'min="1" max="5" step="1"')}<label class="field span-2"><span>Tags (separadas por vírgula)</span><input class="input" name="tags" value="${escapeHtml((memory?.tags || []).join(", "))}" placeholder="financeiro, prioridade"></label><label class="field span-2"><span>Conteúdo</span><textarea class="textarea" name="content" required>${escapeHtml(memory?.content || "")}</textarea></label></div></form>`,
+    async () => {
+      const form = document.querySelector("[data-ai-memory-form]");
+      if (!form?.reportValidity()) return false;
+      const data = Object.fromEntries(new FormData(form));
+      const payload = {
+        projectKey: data.projectKey,
+        scope: data.scope,
+        title: String(data.title || "").trim(),
+        content: String(data.content || "").trim(),
+        tags: String(data.tags || "").split(",").map((item) => item.trim()).filter(Boolean),
+        importance: Number(data.importance || 1)
+      };
+      if (isEdit) {
+        await api(`/api/memory/${memory.id}`, { method: "PUT", body: JSON.stringify(payload) });
+        toast("Memória atualizada.");
+      } else {
+        await api("/api/memory", { method: "POST", body: JSON.stringify(payload) });
+        toast("Memória criada.");
+      }
+      await renderAiCenter();
+    },
+    "Cancelar",
+    isEdit ? "Salvar" : "Criar"
+  );
+}
+
+function aiCenterMemoriesSection(memories = []) {
+  const filters = state.aiCenter.filters || {};
+  return `<section class="card"><div class="toolbar ai-center-toolbar"><label class="field"><span>projectKey</span><select class="select" data-ai-memory-filter="projectKey"><option value="">Todos</option>${AI_CENTER_PROJECT_KEYS.map((projectKey) => `<option value="${projectKey}" ${filters.projectKey === projectKey ? "selected" : ""}>${projectKey}</option>`).join("")}</select></label><label class="field"><span>Escopo</span><select class="select" data-ai-memory-filter="scope"><option value="">Todos</option>${AI_CENTER_SCOPES.map((scope) => `<option value="${scope}" ${filters.scope === scope ? "selected" : ""}>${scope}</option>`).join("")}</select></label><label class="field"><span>Tag</span><input class="input" data-ai-memory-filter="tag" value="${escapeHtml(filters.tag || "")}" placeholder="ex: financeiro"></label><label class="field"><span>Importância</span><select class="select" data-ai-memory-filter="importance"><option value="">Todas</option><option value="1" ${filters.importance === "1" ? "selected" : ""}>1</option><option value="2" ${filters.importance === "2" ? "selected" : ""}>2</option><option value="3" ${filters.importance === "3" ? "selected" : ""}>3</option><option value="4" ${filters.importance === "4" ? "selected" : ""}>4</option><option value="5" ${filters.importance === "5" ? "selected" : ""}>5</option></select></label><label class="field span-2"><span>Busca por texto</span><input class="input" data-ai-memory-filter="q" value="${escapeHtml(filters.q || "")}" placeholder="Buscar no título, conteúdo e tags"></label></div><div class="actions" style="margin-bottom:12px"><button class="button button-primary" data-ai-memory-filter-apply>Filtrar</button><button class="button button-secondary" data-ai-memory-filter-clear>Limpar</button><button class="button button-primary" data-ai-memory-create>+ Criar memória</button></div>${aiCenterMemoryTable(memories)}</section>`;
+}
+
+function aiCenterProjectsSection(stats = {}) {
+  const byProject = new Map((stats.byProject || []).map((item) => [String(item.projectKey), Number(item.total || 0)]));
+  const recent = Array.isArray(stats.recent) ? stats.recent : [];
+  return `<section class="grid-2">${AI_CENTER_PROJECT_KEYS.map((projectKey) => {
+    const total = byProject.get(projectKey) || 0;
+    const projectRecent = recent.filter((item) => String(item.projectKey || "associacoes") === projectKey).slice(0, 3);
+    return `<article class="card ai-center-project-card"><header><div><small>Projeto</small><h3>${escapeHtml(projectKey)}</h3></div>${badge("active")}</header><div class="detail-item" style="margin:10px 0 12px"><small>Quantidade de memórias</small><strong>${total}</strong></div><div class="ai-center-stack">${projectRecent.map((item) => `<div class="ai-center-row"><div><strong>${escapeHtml(item.title || "Sem título")}</strong><small>${escapeHtml(item.scope || "organization")}</small></div><span>${dateTime(item.createdAt)}</span></div>`).join("") || '<div class="empty ai-empty">Sem memórias recentes.</div>'}</div></article>`;
+  }).join("")}</section>`;
+}
+
+function aiCenterLogsSection({ assistantHistory, agentLogs }) {
+  const conversations = Array.isArray(assistantHistory.conversations) ? assistantHistory.conversations : [];
+  const rows = conversations.slice(0, 12).map((item) => {
+    const messages = Array.isArray(item.messages) ? item.messages : [];
+    const question = messages.filter((entry) => entry.role === "user").slice(-1)[0];
+    const answer = messages.filter((entry) => entry.role === "assistant").slice(-1)[0];
+    const context = answer?.meta?.memoryContext || {};
+    return `<tr><td>${escapeHtml(question?.text || "Sem pergunta")}</td><td>${Number((context.memories || []).length || 0)} memória(s)</td><td>${escapeHtml(context.projectKey || "associacoes")}</td><td>${dateTime(answer?.at || item.updatedAt)}</td></tr>`;
+  });
+  const agentRows = (agentLogs.logs || []).slice(0, 8).map((item) => `<tr><td>${escapeHtml(item.agentId || "agent")}</td><td>${badge(item.status || "active")}</td><td>${escapeHtml(String(item.input || "").slice(0, 90))}</td><td>${dateTime(item.createdAt)}</td></tr>`);
+  return `<section class="grid-2"><article class="card"><h3>Últimas perguntas</h3><div class="table-wrap"><table class="table"><thead><tr><th>Pergunta</th><th>Contexto encontrado</th><th>projectKey usado</th><th>Data/hora</th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="4" class="empty">Sem histórico do Assistant. Placeholder ativo para esta versão.</td></tr>'}</tbody></table></div></article><article class="card"><h3>Logs dos AI Agents</h3><div class="table-wrap"><table class="table"><thead><tr><th>Agente</th><th>Status</th><th>Entrada</th><th>Data/hora</th></tr></thead><tbody>${agentRows.join("") || '<tr><td colspan="4" class="empty">Sem logs de agentes até o momento.</td></tr>'}</tbody></table></div></article></section>`;
+}
+
+function bindAiCenterMemories(memories = []) {
+  content().querySelector("[data-ai-memory-create]")?.addEventListener("click", () => openAiCenterMemoryModal());
+  content().querySelector("[data-ai-memory-filter-apply]")?.addEventListener("click", async () => {
+    const next = { ...state.aiCenter.filters };
+    content().querySelectorAll("[data-ai-memory-filter]").forEach((control) => {
+      next[control.dataset.aiMemoryFilter] = String(control.value || "").trim();
+    });
+    state.aiCenter.filters = next;
+    await renderAiCenter();
+  });
+  content().querySelector("[data-ai-memory-filter-clear]")?.addEventListener("click", async () => {
+    state.aiCenter.filters = { projectKey: "", scope: "", tag: "", importance: "", q: "" };
+    await renderAiCenter();
+  });
+  content().querySelectorAll("[data-memory-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const memory = memories.find((item) => item.id === button.dataset.memoryView);
+      if (memory) openAiCenterMemoryDetails(memory);
+    });
+  });
+  content().querySelectorAll("[data-memory-edit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const memory = memories.find((item) => item.id === button.dataset.memoryEdit);
+      if (memory) openAiCenterMemoryModal(memory);
+    });
+  });
+  content().querySelectorAll("[data-memory-delete]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const memory = memories.find((item) => item.id === button.dataset.memoryDelete);
+      if (!memory) return;
+      await api(`/api/memory/${memory.id}?projectKey=${encodeURIComponent(memory.projectKey || "associacoes")}`, { method: "DELETE" });
+      toast("Memória excluída.");
+      await renderAiCenter();
+    });
+  });
+}
+
+async function renderAiCenter() {
+  const activeTab = state.aiCenter.tab || "overview";
+  const [stats, assistantHistory, agentStatus, agentLogs, memoriesResult] = await Promise.all([
+    api("/api/memory/stats"),
+    api("/api/ai/assistant/history?limit=20").catch(() => ({ ok: false, conversations: [] })),
+    api("/api/agents/status").catch(() => ({ ok: false, supervisor: { status: "offline", version: "-" }, agents: [] })),
+    api("/api/agents/logs?limit=20").catch(() => ({ ok: false, logs: [] })),
+    activeTab === "memories"
+      ? api(`/api/memory?${aiCenterParams(state.aiCenter.filters || {})}`)
+      : Promise.resolve({ memories: [] })
+  ]);
+
+  let tabHtml = "";
+  if (activeTab === "memories") {
+    tabHtml = aiCenterMemoriesSection(memoriesResult.memories || []);
+  } else if (activeTab === "projects") {
+    tabHtml = aiCenterProjectsSection(stats);
+  } else if (activeTab === "logs") {
+    tabHtml = aiCenterLogsSection({ assistantHistory, agentLogs });
+  } else {
+    tabHtml = aiCenterOverviewSection({ stats, assistantHistory, agentStatus });
+  }
+
+  content().innerHTML = `${pageHead("AI Center", "Governança, memória, projetos e auditoria inicial da NEXORA IA.", '<a class="button button-secondary" href="#ia-chat">Abrir NEXORA IA Chat</a>')}<section class="card ai-center-card">${aiCenterTabs(activeTab)}${tabHtml}</section>`;
+
+  content().querySelectorAll("[data-ai-center-tab]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.aiCenter.tab = button.dataset.aiCenterTab;
+      await renderAiCenter();
+    });
+  });
+
+  if (activeTab === "memories") bindAiCenterMemories(memoriesResult.memories || []);
 }
 
 async function renderNotificationsRoute() {
