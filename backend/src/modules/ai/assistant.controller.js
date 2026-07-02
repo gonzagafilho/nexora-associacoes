@@ -9,6 +9,7 @@ const { supervisor: agentSupervisor } = require("../../agents");
 const { buildCopilotMemoryContext } = require("../copilot");
 const { normalizeProjectKey } = require("../memory/memory.service");
 const aiActivityLogService = require("./aiActivityLog.service");
+const { registry: skillsRegistry } = require("./skills/registry");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -130,6 +131,42 @@ async function respondAssistantSuccess({ req, res, startedAt, text, projectKey, 
   return res.json(payload);
 }
 
+function resolveSkillCandidate({ text, intentInfo, projectKey }) {
+  const lower = String(text || "").trim().toLowerCase();
+  if (!lower) return null;
+
+  if (/(criar|gerar).*(bolepix|boleto|pix)|(?:bolepix|boleto|pix).*(criar|gerar)/.test(lower)) {
+    return { skill: "finance.createBolePix", payload: { projectKey }, answerPrefix: "Skill finance.createBolePix executada." };
+  }
+  if (/(listar|listar todas|mostrar).*(fatura|faturas|cobran|mensalidad)/.test(lower)) {
+    return { skill: "finance.listInvoices", payload: { projectKey }, answerPrefix: "Skill finance.listInvoices executada." };
+  }
+  if (/(buscar|encontrar|procurar).*(associad)/.test(lower)) {
+    return { skill: "associate.find", payload: { q: text, projectKey }, answerPrefix: "Skill associate.find executada." };
+  }
+  if (/listar.*associad|associad.*listar/.test(lower)) {
+    return { skill: "associate.list", payload: { projectKey }, answerPrefix: "Skill associate.list executada." };
+  }
+  if (/listar.*protocol|protocol.*abert|protocol.*listar/.test(lower)) {
+    return { skill: "protocol.list", payload: { projectKey }, answerPrefix: "Skill protocol.list executada." };
+  }
+  if (/listar.*projet|projet.*listar/.test(lower)) {
+    return { skill: "project.list", payload: { projectKey }, answerPrefix: "Skill project.list executada." };
+  }
+
+  if (intentInfo?.intent === "open_protocols") {
+    return { skill: "protocol.list", payload: { status: "open", projectKey }, answerPrefix: "Skill protocol.list executada." };
+  }
+  if (intentInfo?.intent === "associates") {
+    return { skill: "associate.list", payload: { projectKey }, answerPrefix: "Skill associate.list executada." };
+  }
+  if (intentInfo?.intent === "overdue_invoices") {
+    return { skill: "finance.listInvoices", payload: { status: "overdue", projectKey }, answerPrefix: "Skill finance.listInvoices executada." };
+  }
+
+  return null;
+}
+
 async function getContext(req, res) {
   try {
     const context = await buildSmartContext({
@@ -173,6 +210,7 @@ async function askAssistant(req, res) {
   let text = "";
   let projectKey = safeProjectKey(req.body?.projectKey);
   let memoryContext = { projectKey, memories: [], promptContext: "" };
+  let skillAttempted = "";
 
   try {
     text = String(req.body?.message || req.body?.question || "").trim();
@@ -220,6 +258,80 @@ async function askAssistant(req, res) {
           route: activeExecution.plan?.route
         }
       : identifyIntent(text);
+
+    const skillCandidate = resolveSkillCandidate({ text, intentInfo, projectKey });
+    if (skillCandidate) {
+      skillAttempted = skillCandidate.skill;
+      const skillStartedAt = Date.now();
+      const skillExecution = await skillsRegistry.execute(skillCandidate.skill, skillCandidate.payload || {}, {
+        tenantId: req.user.tenantId,
+        userId: req.user.id,
+        userRole: req.user.role,
+        userEmail: req.user.email,
+        enabledModules: req.user.enabledModules
+      });
+
+      const count = Number(skillExecution?.data?.count || 0);
+      const skillAnswer = `${skillCandidate.answerPrefix} Resultado: ${count || 1} item(ns).`;
+
+      await appendMessagesSafe({
+        conversation,
+        incoming: text,
+        outgoing: skillAnswer,
+        meta: {
+          outgoing: {
+            intent: skillExecution.skill,
+            module: "NEXORA Skills",
+            skillExecuted: skillExecution.skill,
+            skillDuration: skillExecution.durationMs,
+            skillStatus: "success",
+            memoryContext
+          }
+        }
+      });
+      await updateConversationStateSafe(conversation, {
+        intent: skillExecution.skill,
+        module: "NEXORA Skills",
+        status: "open",
+        execution: { action: "", requiredConfirmation: false, confirmed: false, plan: null, payload: null, result: null },
+        responseTime: Date.now() - startedAt
+      });
+
+      const responsePayload = {
+        ok: true,
+        conversationId: conversation?.conversationId,
+        intent: skillExecution.skill,
+        module: "NEXORA Skills",
+        answer: skillAnswer,
+        data: {
+          skill: skillExecution.skill,
+          result: skillExecution.data,
+          memoryContext
+        },
+        skillExecuted: skillExecution.skill,
+        skillDuration: skillExecution.durationMs,
+        skillStatus: "success"
+      };
+
+      return respondAssistantSuccess({
+        req,
+        res,
+        startedAt,
+        text,
+        projectKey,
+        memoryContext,
+        module: "NEXORA Skills",
+        action: skillExecution.skill,
+        answer: skillAnswer,
+        metadata: {
+          conversationId: conversation?.conversationId,
+          skillExecuted: skillExecution.skill,
+          skillDuration: Date.now() - skillStartedAt,
+          skillStatus: "success"
+        },
+        payload: responsePayload
+      });
+    }
 
     await publishAiEventSafe(req, "ai.message", {
       action: "message",
@@ -457,7 +569,12 @@ async function askAssistant(req, res) {
       status: "error",
       errorMessage: error.message || "Erro ao processar mensagem da NEXORA IA.",
       durationMs: Date.now() - startedAt,
-      metadata: { endpoint: "/api/ai/assistant/message" }
+      metadata: {
+        endpoint: "/api/ai/assistant/message",
+        skillExecuted: skillAttempted,
+        skillDuration: Date.now() - startedAt,
+        skillStatus: "error"
+      }
     });
     console.error("[ai:assistant:message]", error.message);
     return res.status(error.statusCode || 500).json({ ok: false, message: error.message || "Erro ao processar mensagem da NEXORA IA." });

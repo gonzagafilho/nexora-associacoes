@@ -1012,7 +1012,7 @@ function aiCenterTab(activeTab, key, label) {
 }
 
 function aiCenterTabs(activeTab) {
-  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "overview", "Visão Geral")}${aiCenterTab(activeTab, "memories", "Memórias")}${aiCenterTab(activeTab, "projects", "Projetos")}${aiCenterTab(activeTab, "logs", "Logs da IA")}</div>`;
+  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "overview", "Visão Geral")}${aiCenterTab(activeTab, "memories", "Memórias")}${aiCenterTab(activeTab, "projects", "Projetos")}${aiCenterTab(activeTab, "logs", "Logs da IA")}${aiCenterTab(activeTab, "skills", "Skills")}</div>`;
 }
 
 function aiCenterParams(filters = {}) {
@@ -1165,6 +1165,11 @@ function bindAiCenterLogs(logs = []) {
   });
 }
 
+function aiCenterSkillsSection(skills = []) {
+  const rows = skills.map((item) => `<tr><td>${escapeHtml(item.name || "—")}</td><td>${escapeHtml(item.description || "")}</td><td>${escapeHtml(item.version || "1.0.0")}</td><td>${escapeHtml((item.permissions || []).join(", ") || "—")}</td><td>${item.active ? '<span class="os-badge os-badge-active">Ativa</span>' : '<span class="os-badge os-badge-inactive">Inativa</span>'}</td></tr>`).join("");
+  return `<section class="card"><h3>Skills Engine</h3><div class="table-wrap"><table class="table"><thead><tr><th>Nome</th><th>Descrição</th><th>Versão</th><th>Permissões</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">Nenhuma skill registrada.</td></tr>'}</tbody></table></div></section>`;
+}
+
 function bindAiCenterMemories(memories = []) {
   content().querySelector("[data-ai-memory-create]")?.addEventListener("click", () => openAiCenterMemoryModal());
   content().querySelector("[data-ai-memory-filter-apply]")?.addEventListener("click", async () => {
@@ -1204,7 +1209,7 @@ function bindAiCenterMemories(memories = []) {
 
 async function renderAiCenter() {
   const activeTab = state.aiCenter.tab || "overview";
-  const [stats, assistantHistory, agentStatus, activityStats, activityLogsResult, memoriesResult] = await Promise.all([
+  const [stats, assistantHistory, agentStatus, activityStats, activityLogsResult, memoriesResult, skillsResult] = await Promise.all([
     api("/api/memory/stats"),
     api("/api/ai/assistant/history?limit=20").catch(() => ({ ok: false, conversations: [] })),
     api("/api/agents/status").catch(() => ({ ok: false, supervisor: { status: "offline", version: "-" }, agents: [] })),
@@ -1214,7 +1219,10 @@ async function renderAiCenter() {
       : Promise.resolve({ logs: [] }),
     activeTab === "memories"
       ? api(`/api/memory?${aiCenterParams(state.aiCenter.filters || {})}`)
-      : Promise.resolve({ memories: [] })
+      : Promise.resolve({ memories: [] }),
+    activeTab === "skills"
+      ? api("/api/ai/skills")
+      : Promise.resolve({ skills: [] })
   ]);
 
   let tabHtml = "";
@@ -1224,6 +1232,8 @@ async function renderAiCenter() {
     tabHtml = aiCenterProjectsSection(stats);
   } else if (activeTab === "logs") {
     tabHtml = aiCenterLogsSection(activityLogsResult.logs || []);
+  } else if (activeTab === "skills") {
+    tabHtml = aiCenterSkillsSection(skillsResult.skills || []);
   } else {
     tabHtml = aiCenterOverviewSection({ stats, assistantHistory, agentStatus, activityStats });
   }

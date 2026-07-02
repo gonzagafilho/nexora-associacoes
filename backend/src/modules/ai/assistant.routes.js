@@ -2,6 +2,7 @@ const express = require("express");
 
 const auth = require("../../middlewares/auth");
 const aiActivityLogRoutes = require("./aiActivityLog.routes");
+const skillsRoutes = require("./skills.routes");
 const {
 	askAssistant,
 	getContext,
@@ -13,6 +14,7 @@ const {
 const router = express.Router();
 
 router.use("/activity-logs", aiActivityLogRoutes);
+router.use("/skills", skillsRoutes);
 
 router.get("/assistant/context", auth, getContext);
 router.get("/assistant/history", auth, getHistory);
