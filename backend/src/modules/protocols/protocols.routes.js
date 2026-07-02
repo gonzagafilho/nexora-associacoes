@@ -316,7 +316,7 @@ router.get("/dashboard", protocolAccess, async (req, res) => {
     if (protocol.status === "resolved") acc.resolvedProtocols += 1;
     if (protocol.status === "closed") acc.closedProtocols += 1;
     if (protocol.priority === "urgent") acc.urgentProtocols += 1;
-    if (protocol.dueDate && !CLOSED_STATUSES.has(protocol.status) && new Date(protocol.dueDate).getTime() < now) acc.overdueProtocols += 1;
+    if (protocol.dueDate && protocol.status === "open" && new Date(protocol.dueDate).getTime() < now) acc.overdueProtocols += 1;
     return acc;
   }, {
     totalProtocols: 0,

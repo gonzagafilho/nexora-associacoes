@@ -230,12 +230,25 @@ router.get("/summary", financialAccess, async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
     const transactions = await FinancialTransaction.find({ tenantId }).lean();
-    const monthStart = startOfMonth();
-    const monthEnd = endOfMonth();
+    let monthStart = startOfMonth();
+    let monthEnd = endOfMonth();
     const today = startOfDay();
 
     const sum = (rows) => roundMoney(rows.reduce((total, item) => total + Number(item.amount || 0), 0));
     const paid = transactions.filter((item) => item.status === "paid");
+    const currentMonthPaid = paid.filter((item) => item.paidAt && new Date(item.paidAt) >= monthStart && new Date(item.paidAt) <= monthEnd);
+    if (!currentMonthPaid.length && paid.some((item) => item.paidAt)) {
+      const latestPaidAt = paid.reduce((latest, item) => {
+        if (!item.paidAt) return latest;
+        const paidAt = new Date(item.paidAt);
+        if (Number.isNaN(paidAt.getTime())) return latest;
+        return !latest || paidAt > latest ? paidAt : latest;
+      }, null);
+      if (latestPaidAt) {
+        monthStart = startOfMonth(latestPaidAt);
+        monthEnd = endOfMonth(latestPaidAt);
+      }
+    }
     const paidMonth = paid.filter((item) => item.paidAt && new Date(item.paidAt) >= monthStart && new Date(item.paidAt) <= monthEnd);
     const pending = transactions.filter((item) => item.status === "pending");
     const overdue = transactions.filter((item) => item.status === "overdue" || (item.status === "pending" && item.dueDate && startOfDay(item.dueDate) < today));
