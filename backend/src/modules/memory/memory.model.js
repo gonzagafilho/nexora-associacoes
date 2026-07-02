@@ -3,10 +3,12 @@ const mongoose = require("mongoose");
 const MEMORY_SCOPES = ["global", "organization", "financial", "projects", "assets", "protocols", "workflow", "bi", "notifications", "subscription", "custom"];
 const MEMORY_SOURCES = ["manual", "copilot", "agent", "system", "import"];
 const MEMORY_VISIBILITIES = ["private", "team", "tenant"];
+const MEMORY_PROJECT_KEYS = ["associacoes", "xpdcnet", "chatbot-dcinfinity", "dcnet-palpites", "workponto", "nexora-financeiro", "guardian"];
 
 const tenantMemorySchema = new mongoose.Schema(
   {
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
+    projectKey: { type: String, enum: MEMORY_PROJECT_KEYS, default: "associacoes", index: true },
     scope: { type: String, enum: MEMORY_SCOPES, default: "organization", index: true },
     title: { type: String, required: true, trim: true },
     content: { type: String, required: true, trim: true },
@@ -21,11 +23,12 @@ const tenantMemorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-tenantMemorySchema.index({ tenantId: 1, createdAt: -1 });
-tenantMemorySchema.index({ tenantId: 1, scope: 1, importance: -1 });
-tenantMemorySchema.index({ tenantId: 1, tags: 1 });
+tenantMemorySchema.index({ tenantId: 1, projectKey: 1, createdAt: -1 });
+tenantMemorySchema.index({ tenantId: 1, projectKey: 1, scope: 1, importance: -1 });
+tenantMemorySchema.index({ tenantId: 1, projectKey: 1, tags: 1 });
 
 module.exports = mongoose.model("TenantMemory", tenantMemorySchema);
 module.exports.MEMORY_SCOPES = MEMORY_SCOPES;
 module.exports.MEMORY_SOURCES = MEMORY_SOURCES;
 module.exports.MEMORY_VISIBILITIES = MEMORY_VISIBILITIES;
+module.exports.MEMORY_PROJECT_KEYS = MEMORY_PROJECT_KEYS;

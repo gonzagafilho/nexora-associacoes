@@ -1,5 +1,8 @@
 const TenantMemory = require("./memory.model");
 
+const { MEMORY_PROJECT_KEYS } = TenantMemory;
+const DEFAULT_PROJECT_KEY = "associacoes";
+
 function escapeRegExp(value) {
   return String(value).replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
 }
@@ -15,19 +18,51 @@ function normalizeImportance(value) {
   return Math.min(Math.max(Math.round(number), 1), 5);
 }
 
-function activeMemoryFilter(tenantId) {
+function normalizeProjectKey(value) {
+  const projectKey = String(value || DEFAULT_PROJECT_KEY).trim().toLowerCase() || DEFAULT_PROJECT_KEY;
+  if (!MEMORY_PROJECT_KEYS.includes(projectKey)) {
+    const error = new Error("Projeto inválido para memória.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return projectKey;
+}
+
+function projectMemoryClause(projectKey) {
+  if (projectKey === DEFAULT_PROJECT_KEY) {
+    return {
+      $or: [
+        { projectKey },
+        { projectKey: null },
+        { projectKey: "" },
+        { projectKey: { $exists: false } }
+      ]
+    };
+  }
+  return { projectKey };
+}
+
+function tenantProjectFilter(tenantId, projectKey) {
   return {
     tenantId,
+    $and: [projectMemoryClause(normalizeProjectKey(projectKey))]
+  };
+}
+
+function activeMemoryFilter(tenantId, projectKey) {
+  const filter = tenantProjectFilter(tenantId, projectKey);
+  filter.$and.push({
     $or: [
       { expiresAt: null },
       { expiresAt: { $exists: false } },
       { expiresAt: { $gt: new Date() } }
     ]
-  };
+  });
+  return filter;
 }
 
-function buildListFilter({ tenantId, scope, tag, importance, source, visibility }) {
-  const filter = activeMemoryFilter(tenantId);
+function buildListFilter({ tenantId, projectKey, scope, tag, importance, source, visibility }) {
+  const filter = activeMemoryFilter(tenantId, projectKey);
   if (scope) filter.scope = String(scope).trim();
   if (tag) filter.tags = String(tag).trim().toLowerCase();
   if (importance !== undefined && importance !== "") filter.importance = normalizeImportance(importance);
@@ -36,8 +71,8 @@ function buildListFilter({ tenantId, scope, tag, importance, source, visibility 
   return filter;
 }
 
-function buildSearchFilter({ tenantId, q, scope, importance }) {
-  const filter = buildListFilter({ tenantId, scope, importance });
+function buildSearchFilter({ tenantId, projectKey, q, scope, importance }) {
+  const filter = buildListFilter({ tenantId, projectKey, scope, importance });
   const query = String(q || "").trim();
   if (!query) return filter;
   const terms = Array.from(new Set(query
@@ -48,16 +83,15 @@ function buildSearchFilter({ tenantId, q, scope, importance }) {
     .filter((item) => item.length >= 3)))
     .slice(0, 8);
   const expressions = (terms.length ? terms : [query]).map((term) => new RegExp(escapeRegExp(term), "i"));
-  filter.$and = [
-    {
-      $or: expressions.flatMap((regex) => [
-        { title: regex },
-        { content: regex },
-        { tags: regex },
-        { scope: regex }
-      ])
-    }
-  ];
+  filter.$and = filter.$and || [];
+  filter.$and.push({
+    $or: expressions.flatMap((regex) => [
+      { title: regex },
+      { content: regex },
+      { tags: regex },
+      { scope: regex }
+    ])
+  });
   return filter;
 }
 
@@ -66,6 +100,7 @@ function serialize(memory) {
   return {
     id: String(memory._id),
     tenantId: String(memory.tenantId),
+    projectKey: memory.projectKey || DEFAULT_PROJECT_KEY,
     scope: memory.scope || "organization",
     title: memory.title || "",
     content: memory.content || "",
@@ -102,6 +137,7 @@ function buildPayload(input = {}, user = {}) {
   }
   return {
     tenantId: user.tenantId,
+    projectKey: normalizeProjectKey(input.projectKey),
     scope: String(input.scope || "organization").trim() || "organization",
     title,
     content,
@@ -115,36 +151,39 @@ function buildPayload(input = {}, user = {}) {
   };
 }
 
-async function createMemory({ tenantId, userId, data }) {
-  const payload = buildPayload(data, { tenantId, id: userId });
+async function createMemory({ tenantId, userId, projectKey, data }) {
+  const payload = buildPayload({ ...(data || {}), projectKey: projectKey || data?.projectKey }, { tenantId, id: userId });
   const memory = await TenantMemory.create(payload);
   return serialize(memory);
 }
 
-async function listMemories({ tenantId, query = {} }) {
+async function listMemories({ tenantId, projectKey, query = {} }) {
+  const resolvedProjectKey = normalizeProjectKey(projectKey || query.projectKey);
   const limit = Math.min(Math.max(Number(query.limit || 50), 1), 200);
-  const memories = await TenantMemory.find(buildListFilter({ tenantId, ...query })).sort({ importance: -1, createdAt: -1 }).limit(limit).lean();
+  const memories = await TenantMemory.find(buildListFilter({ tenantId, ...query, projectKey: resolvedProjectKey })).sort({ importance: -1, createdAt: -1 }).limit(limit).lean();
   return memories.map(serialize);
 }
 
-async function searchMemories({ tenantId, q = "", query = {} }) {
+async function searchMemories({ tenantId, projectKey, q = "", query = {} }) {
+  const resolvedProjectKey = normalizeProjectKey(projectKey || query.projectKey);
   const limit = Math.min(Math.max(Number(query.limit || 20), 1), 100);
-  const memories = await TenantMemory.find(buildSearchFilter({ tenantId, q, scope: query.scope, importance: query.importance }))
+  const memories = await TenantMemory.find(buildSearchFilter({ tenantId, projectKey: resolvedProjectKey, q, scope: query.scope, importance: query.importance }))
     .sort({ importance: -1, updatedAt: -1 })
     .limit(limit)
     .lean();
   return memories.map(serialize);
 }
 
-async function getMemory({ tenantId, id }) {
-  const memory = await TenantMemory.findOne({ ...activeMemoryFilter(tenantId), _id: id }).lean();
+async function getMemory({ tenantId, projectKey, id }) {
+  const memory = await TenantMemory.findOne({ ...activeMemoryFilter(tenantId, projectKey), _id: id }).lean();
   return serialize(memory);
 }
 
-async function updateMemory({ tenantId, id, data }) {
-  const existing = await TenantMemory.findOne({ tenantId, _id: id });
+async function updateMemory({ tenantId, projectKey, id, data }) {
+  const resolvedProjectKey = normalizeProjectKey(projectKey || data?.projectKey);
+  const existing = await TenantMemory.findOne({ ...tenantProjectFilter(tenantId, resolvedProjectKey), _id: id });
   if (!existing) return null;
-  const payload = buildPayload({ ...serialize(existing), ...data }, { tenantId, id: existing.createdBy });
+  const payload = buildPayload({ ...serialize(existing), ...data, projectKey: resolvedProjectKey }, { tenantId, id: existing.createdBy });
   delete payload.tenantId;
   delete payload.createdBy;
   Object.assign(existing, payload);
@@ -152,8 +191,8 @@ async function updateMemory({ tenantId, id, data }) {
   return serialize(existing);
 }
 
-async function deleteMemory({ tenantId, id }) {
-  const deleted = await TenantMemory.findOneAndDelete({ tenantId, _id: id }).lean();
+async function deleteMemory({ tenantId, projectKey, id }) {
+  const deleted = await TenantMemory.findOneAndDelete({ ...tenantProjectFilter(tenantId, projectKey), _id: id }).lean();
   return serialize(deleted);
 }
 
@@ -165,5 +204,8 @@ module.exports = {
   updateMemory,
   deleteMemory,
   serialize,
-  normalizeTags
+  normalizeTags,
+  normalizeProjectKey,
+  DEFAULT_PROJECT_KEY,
+  MEMORY_PROJECT_KEYS
 };

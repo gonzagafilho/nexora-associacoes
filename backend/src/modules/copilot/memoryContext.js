@@ -1,4 +1,4 @@
-const { searchMemories } = require("../memory/memory.service");
+const { searchMemories, normalizeProjectKey } = require("../memory/memory.service");
 
 function formatMemoryContext(memories = []) {
   if (!memories.length) return "";
@@ -11,9 +11,11 @@ function formatMemoryContext(memories = []) {
     .join("\n");
 }
 
-async function buildCopilotMemoryContext({ tenantId, question, limit = 5 }) {
-  const memories = await searchMemories({ tenantId, q: question, query: { limit } });
+async function buildCopilotMemoryContext({ tenantId, projectKey, question, limit = 5 }) {
+  const resolvedProjectKey = normalizeProjectKey(projectKey);
+  const memories = await searchMemories({ tenantId, projectKey: resolvedProjectKey, q: question, query: { limit } });
   return {
+    projectKey: resolvedProjectKey,
     memories,
     promptContext: formatMemoryContext(memories)
   };
