@@ -92,3 +92,44 @@ Publicação no servidor:
 
 O instalador preserva SSL, faz backup do virtual host, publica a landing NEXORA
 e o build do Admin, valida `nginx -t` e só então recarrega o Nginx.
+
+## NEXORA Platform Vision
+
+NEXORA evolui para uma plataforma multi-app, onde Associações é o primeiro app
+da arquitetura e novos produtos compartilham um núcleo comum.
+
+### Platform
+
+- Núcleo compartilhado para autenticação, permissões, runtime, eventos e audit.
+- Contratos comuns para apps consumirem capacidades centrais sem duplicação.
+
+### Apps
+
+- Cada produto opera como app independente (associacoes, xpdcnet, guardian,
+  chatbot, financeiro, workponto, palpites).
+- Apps podem evoluir em ciclos próprios, preservando integração com o core.
+
+### Control Center
+
+- Painel de governança da plataforma com visão operacional por app.
+- Governança de status, módulos, saúde, eventos e observabilidade.
+
+### AI Core
+
+- Camada central de IA para Assistant, Context Provider e políticas.
+- Desacoplamento entre IA de plataforma e lógica específica de app.
+
+### Skills
+
+- Skills reutilizáveis e versionáveis para múltiplos apps.
+- Regras de segurança e permissões centralizadas.
+
+### Orchestrator
+
+- Planejamento e execução multi-step com rastreabilidade.
+- Integração com logs de atividade, políticas e confirmação obrigatória.
+
+### Marketplace (futuro)
+
+- Catálogo de apps, skills e integrações externas com governança.
+- Onboarding padronizado via SDK da plataforma.
