@@ -9,8 +9,7 @@ const { supervisor: agentSupervisor } = require("../../agents");
 const { buildCopilotMemoryContext } = require("../copilot");
 const { normalizeProjectKey } = require("../memory/memory.service");
 const aiActivityLogService = require("./aiActivityLog.service");
-const { registry: skillsRegistry } = require("./skills/registry");
-const { orchestratorService } = require("./orchestrator");
+const { core: platformCore } = require("../../platform");
 
 function clientIp(req) {
   return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -285,16 +284,20 @@ async function askAssistant(req, res) {
 
     const orchestratorCandidate = resolveOrchestratorCandidate({ text, intentInfo });
     if (orchestratorCandidate) {
-      const planResult = await orchestratorService.plan({
-        tenantId: req.user.tenantId,
-        userId: req.user.id,
-        userRole: req.user.role,
-        userEmail: req.user.email,
-        enabledModules: req.user.enabledModules,
+      const planned = await platformCore.ai.planAndMaybeExecute({
         question: text,
         projectKey,
+        context: {
+          tenantId: req.user.tenantId,
+          userId: req.user.id,
+          userRole: req.user.role,
+          userEmail: req.user.email,
+          enabledModules: req.user.enabledModules
+        },
+        autoExecute: false,
         input: { projectKey }
       });
+      const planResult = planned.planResult;
 
       if (planResult.policy?.blocked) {
         const error = new Error(planResult.policy.reasons?.[0] || "Plano bloqueado pela Policy Engine.");
@@ -373,7 +376,7 @@ async function askAssistant(req, res) {
         });
       }
 
-      const executionResult = await orchestratorService.execute({
+      const executionResult = await platformCore.orchestrator.execute({
         tenantId: req.user.tenantId,
         userId: req.user.id,
         userRole: req.user.role,
@@ -450,7 +453,7 @@ async function askAssistant(req, res) {
     if (skillCandidate) {
       skillAttempted = skillCandidate.skill;
       const skillStartedAt = Date.now();
-      const skillExecution = await skillsRegistry.execute(skillCandidate.skill, skillCandidate.payload || {}, {
+      const skillExecution = await platformCore.ai.executeSkill(skillCandidate.skill, skillCandidate.payload || {}, {
         tenantId: req.user.tenantId,
         userId: req.user.id,
         userRole: req.user.role,
@@ -589,7 +592,7 @@ async function askAssistant(req, res) {
       if (conversation.status === "awaiting_confirmation") {
         if (acceptedConfirmation(text)) {
           if (activeExecution.action === "orchestrator.execute") {
-            const executionResult = await orchestratorService.execute({
+            const executionResult = await platformCore.orchestrator.execute({
               tenantId: req.user.tenantId,
               userId: req.user.id,
               userRole: req.user.role,

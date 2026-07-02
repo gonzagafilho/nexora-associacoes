@@ -22,7 +22,7 @@ const state = {
   aiPendingAction: null,
   aiThinking: false,
   aiCenter: {
-    tab: "overview",
+    tab: "dashboard",
     selectedProject: "",
     filters: {
       projectKey: "",
@@ -420,7 +420,7 @@ const navItems = [
   ["workflow-marketplace", "Workflow Studio • Marketplace", "workflow", "core"],
   ["workflow-logs", "Workflow Studio • Logs", "workflow", "core"],
   ["ia-chat", "🧠 NEXORA IA • Chat", "intelligence", "core"],
-  ["dashboard/ai-center", "NEXORA IA • AI Center", "intelligence", "core"],
+  ["dashboard/ai-center", "NEXORA Control Center", "intelligence", "core"],
   ["ia-historico", "NEXORA IA • Histórico", "intelligence", "core"],
   ["ia-sugestoes", "NEXORA IA • Sugestões", "intelligence", "core"],
   ["ia-bi", "NEXORA IA • BI Executivo", "intelligence", "core"],
@@ -1012,7 +1012,46 @@ function aiCenterTab(activeTab, key, label) {
 }
 
 function aiCenterTabs(activeTab) {
-  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "overview", "Visão Geral")}${aiCenterTab(activeTab, "memories", "Memórias")}${aiCenterTab(activeTab, "projects", "Projetos")}${aiCenterTab(activeTab, "logs", "Logs da IA")}${aiCenterTab(activeTab, "skills", "Skills")}${aiCenterTab(activeTab, "orchestrator", "Orchestrator")}</div>`;
+  return `<div class="tabs ai-center-tabs">${aiCenterTab(activeTab, "dashboard", "Dashboard")}${aiCenterTab(activeTab, "platform", "Platform")}${aiCenterTab(activeTab, "apps", "Apps")}${aiCenterTab(activeTab, "ai", "AI")}${aiCenterTab(activeTab, "memory", "Memory")}${aiCenterTab(activeTab, "skills", "Skills")}${aiCenterTab(activeTab, "orchestrator", "Orchestrator")}${aiCenterTab(activeTab, "runtime", "Runtime")}${aiCenterTab(activeTab, "events", "Events")}${aiCenterTab(activeTab, "logs", "Logs")}${aiCenterTab(activeTab, "permissions", "Permissions")}${aiCenterTab(activeTab, "marketplace", "Marketplace")}${aiCenterTab(activeTab, "settings", "Settings")}</div>`;
+}
+
+function controlCenterPlaceholderSection(title) {
+  return `<section class="card"><h3>${escapeHtml(title)}</h3><p style="color:var(--muted)">Em breve: módulo em preparação para a NEXORA Platform.</p></section>`;
+}
+
+function controlCenterDashboardSection(platformStatus = {}) {
+  return `<section class="card ai-control-center-hero"><small>NEXORA Platform</small><h2>NEXORA Control Center</h2><p>Painel central para governança da plataforma, apps e núcleo compartilhado.</p></section><section class="metrics">${metric("Apps instalados", Number(platformStatus.installedApps || 0))}${metric("Apps ativos", Number(platformStatus.activeApps || 0))}${metric("Skills", Number(platformStatus.skills || 0))}${metric("Agentes", Number(platformStatus.agents || 0))}${metric("Memórias", Number(platformStatus.memories || 0))}${metric("Eventos", Number(platformStatus.events || 0))}${metric("Runtime", escapeHtml(String(platformStatus.runtime || "online")))}${metric("Health", escapeHtml(String(platformStatus.health || "online")), "Status da plataforma", String(platformStatus.health || "").toLowerCase() !== "online")}${metric("Versão", escapeHtml(String(platformStatus.version || "4.2.0")))}</section>`;
+}
+
+function controlCenterPlatformSection(core = {}, modules = {}) {
+  const coreRows = Object.entries(core.core || {}).map(([key, value]) => `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(String(value || "unknown"))}</td></tr>`).join("");
+  const moduleRows = (modules.modules || []).map((item) => `<tr><td>${escapeHtml(item.module || "—")}</td><td>${escapeHtml((item.apps || []).join(", ") || "—")}</td></tr>`).join("");
+  return `<section class="grid-2"><article class="card"><h3>Platform Core</h3><div class="table-wrap"><table class="table"><thead><tr><th>Core</th><th>Status</th></tr></thead><tbody>${coreRows || '<tr><td colspan="2" class="empty">Sem dados de core.</td></tr>'}</tbody></table></div></article><article class="card"><h3>Platform Modules</h3><div class="table-wrap"><table class="table"><thead><tr><th>Módulo</th><th>Apps</th></tr></thead><tbody>${moduleRows || '<tr><td colspan="2" class="empty">Sem módulos registrados.</td></tr>'}</tbody></table></div></article></section>`;
+}
+
+function controlCenterAppsSection(apps = []) {
+  const rows = apps.map((app) => `<tr><td>${escapeHtml(app.name || app.id || "—")}</td><td>${escapeHtml(app.version || "1.0.0")}</td><td>${badge(app.enabled ? "active" : "inactive")}</td><td>${escapeHtml((app.modules || []).join(", ") || "—")}</td><td>${escapeHtml((app.routes || []).join(", ") || "—")}</td><td><button class="button button-secondary button-sm" type="button" data-platform-app="${escapeHtml(app.id || "")}">Ver App</button></td></tr>`).join("");
+  return `<section class="card"><h3>Apps da Plataforma</h3><div class="table-wrap"><table class="table"><thead><tr><th>App</th><th>Versão</th><th>Status</th><th>Módulos</th><th>Rotas</th><th>Ações</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="empty">Nenhum app registrado.</td></tr>'}</tbody></table></div></section>`;
+}
+
+function bindControlCenterApps(apps = []) {
+  content().querySelectorAll("[data-platform-app]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const appId = String(button.dataset.platformApp || "").trim();
+      if (!appId) return;
+      try {
+        const detail = await api(`/api/platform/apps/${encodeURIComponent(appId)}`);
+        openModal(
+          `App • ${escapeHtml(detail.app?.name || appId)}`,
+          `<div class="detail-grid"><div class="detail-item"><small>Status</small>${badge(detail.status || "inactive")}</div><div class="detail-item"><small>Versão</small>${escapeHtml(detail.version || "—")}</div><div class="detail-item span-2"><small>Módulos</small>${escapeHtml((detail.modules || []).join(", ") || "—")}</div><div class="detail-item span-2"><small>Skills utilizadas</small>${escapeHtml((detail.skillsUsed || []).join(", ") || "—")}</div><div class="detail-item"><small>Memórias</small>${Number(detail.memories || 0)}</div><div class="detail-item"><small>Eventos</small>${Number(detail.events?.totalEvents || 0)}</div><div class="detail-item"><small>Permissões</small>${detail.permissions?.allowed ? "Permitido" : "Restrito"}</div><div class="detail-item"><small>Logs</small>${Number(detail.logs?.recentPlans || 0)} plano(s)</div></div>`,
+          null,
+          "Fechar"
+        );
+      } catch (error) {
+        toast(error.message || "Erro ao abrir dashboard do app.", true);
+      }
+    });
+  });
 }
 
 function aiCenterParams(filters = {}) {
@@ -1228,45 +1267,46 @@ function bindAiCenterMemories(memories = []) {
 }
 
 async function renderAiCenter() {
-  const activeTab = state.aiCenter.tab || "overview";
-  const [stats, assistantHistory, agentStatus, activityStats, activityLogsResult, memoriesResult, skillsResult, orchestratorStatus, orchestratorPlansResult] = await Promise.all([
-    api("/api/memory/stats"),
-    api("/api/ai/assistant/history?limit=20").catch(() => ({ ok: false, conversations: [] })),
-    api("/api/agents/status").catch(() => ({ ok: false, supervisor: { status: "offline", version: "-" }, agents: [] })),
-    api(`/api/ai/activity-logs/stats?${aiActivityLogParams(state.aiCenter.logFilters || {})}`).catch(() => ({ ok: false, total: 0, success: 0, error: 0, avgDurationMs: 0, byProject: [], recent: [] })),
-    activeTab === "logs"
-      ? api(`/api/ai/activity-logs?${aiActivityLogParams(state.aiCenter.logFilters || {})}`)
-      : Promise.resolve({ logs: [] }),
-    activeTab === "memories"
-      ? api(`/api/memory?${aiCenterParams(state.aiCenter.filters || {})}`)
-      : Promise.resolve({ memories: [] }),
-    activeTab === "skills"
-      ? api("/api/ai/skills")
-      : Promise.resolve({ skills: [] }),
-    activeTab === "orchestrator"
-      ? api("/api/ai/orchestrator/status")
-      : Promise.resolve({ totalPlans: 0, executed: 0, successful: 0, failed: 0, avgDurationMs: 0 }),
-    activeTab === "orchestrator"
-      ? api("/api/ai/orchestrator/plans?limit=50")
-      : Promise.resolve({ plans: [] })
+  const activeTab = state.aiCenter.tab || "dashboard";
+  const [platformStatus, platformApps, platformCoreData, platformModulesData] = await Promise.all([
+    api("/api/platform/status").catch(() => ({ ok: false, installedApps: 0, activeApps: 0, skills: 0, agents: 0, memories: 0, events: 0, runtime: "unknown", health: "unknown", version: "4.2.0" })),
+    api("/api/platform/apps").catch(() => ({ ok: false, apps: [] })),
+    api("/api/platform/core").catch(() => ({ ok: false, core: {} })),
+    api("/api/platform/modules").catch(() => ({ ok: false, modules: [] }))
   ]);
 
   let tabHtml = "";
-  if (activeTab === "memories") {
-    tabHtml = aiCenterMemoriesSection(memoriesResult.memories || []);
-  } else if (activeTab === "projects") {
-    tabHtml = aiCenterProjectsSection(stats);
-  } else if (activeTab === "logs") {
-    tabHtml = aiCenterLogsSection(activityLogsResult.logs || []);
-  } else if (activeTab === "skills") {
-    tabHtml = aiCenterSkillsSection(skillsResult.skills || []);
+  if (activeTab === "dashboard") {
+    tabHtml = controlCenterDashboardSection(platformStatus || {});
+  } else if (activeTab === "platform") {
+    tabHtml = controlCenterPlatformSection(platformCoreData || {}, platformModulesData || {});
+  } else if (activeTab === "apps") {
+    tabHtml = controlCenterAppsSection(platformApps.apps || []);
   } else if (activeTab === "orchestrator") {
-    tabHtml = aiCenterOrchestratorSection(orchestratorStatus || {}, orchestratorPlansResult.plans || []);
+    tabHtml = controlCenterPlaceholderSection("Orchestrator");
+  } else if (activeTab === "skills") {
+    tabHtml = controlCenterPlaceholderSection("Skills");
+  } else if (activeTab === "memory") {
+    tabHtml = controlCenterPlaceholderSection("Memory");
+  } else if (activeTab === "ai") {
+    tabHtml = controlCenterPlaceholderSection("AI");
+  } else if (activeTab === "runtime") {
+    tabHtml = controlCenterPlaceholderSection("Runtime");
+  } else if (activeTab === "events") {
+    tabHtml = controlCenterPlaceholderSection("Events");
+  } else if (activeTab === "logs") {
+    tabHtml = controlCenterPlaceholderSection("Logs");
+  } else if (activeTab === "permissions") {
+    tabHtml = controlCenterPlaceholderSection("Permissions");
+  } else if (activeTab === "marketplace") {
+    tabHtml = controlCenterPlaceholderSection("Marketplace");
+  } else if (activeTab === "settings") {
+    tabHtml = controlCenterPlaceholderSection("Settings");
   } else {
-    tabHtml = aiCenterOverviewSection({ stats, assistantHistory, agentStatus, activityStats });
+    tabHtml = controlCenterDashboardSection(platformStatus || {});
   }
 
-  content().innerHTML = `${pageHead("AI Center", "Governança, memória, projetos e auditoria inicial da NEXORA IA.", '<a class="button button-secondary" href="#ia-chat">Abrir NEXORA IA Chat</a>')}<section class="card ai-center-card">${aiCenterTabs(activeTab)}${tabHtml}</section>`;
+  content().innerHTML = `${pageHead("NEXORA Control Center", "Painel central da NEXORA Platform com foco em plataforma, apps e governança.", '<a class="button button-secondary" href="#ia-chat">Abrir NEXORA IA Chat</a>')}<section class="card ai-center-card">${aiCenterTabs(activeTab)}${tabHtml}</section>`;
 
   content().querySelectorAll("[data-ai-center-tab]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1275,19 +1315,7 @@ async function renderAiCenter() {
     });
   });
 
-  if (activeTab === "memories") bindAiCenterMemories(memoriesResult.memories || []);
-  if (activeTab === "logs") bindAiCenterLogs(activityLogsResult.logs || []);
-  if (activeTab === "orchestrator") bindAiCenterOrchestrator(orchestratorPlansResult.plans || []);
-  if (activeTab === "projects") {
-    content().querySelectorAll("[data-ai-project-open]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const projectKey = String(button.dataset.aiProjectOpen || "").trim();
-        if (!projectKey) return;
-        state.aiCenter.selectedProject = projectKey;
-        openAiCenterProjectView(projectKey, stats);
-      });
-    });
-  }
+  if (activeTab === "apps") bindControlCenterApps(platformApps.apps || []);
 }
 
 async function renderNotificationsRoute() {

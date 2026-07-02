@@ -26,6 +26,7 @@ const memoryRoutes = require("./modules/memory/memory.routes");
 const biRoutes = require("./modules/bi/bi.routes");
 const systemRoutes = require("./modules/system/system.routes");
 const workflowRoutes = require("./workflow/routes/workflow.routes");
+const platformRoutes = require("./modules/platform/platform.routes");
 
 const app = express();
 
@@ -65,6 +66,7 @@ app.use("/api/memory", memoryRoutes);
 app.use("/api/bi", biRoutes);
 app.use("/api/system", systemRoutes);
 app.use("/api/workflows", workflowRoutes);
+app.use("/api/platform", platformRoutes);
 app.post(
   "/api/bolepix/webhooks/mercadopago",
   pixRoutes.mercadoPagoWebhook
