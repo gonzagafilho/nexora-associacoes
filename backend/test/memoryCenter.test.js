@@ -3,6 +3,7 @@ const { afterEach, test } = require("node:test");
 const jwt = require("jsonwebtoken");
 
 const TenantMemory = require("../src/modules/memory/memory.model");
+const memoryService = require("../src/modules/memory/memory.service");
 
 const tenantId = "507f1f77bcf86cd799439011";
 const otherTenantId = "507f1f77bcf86cd799439012";
@@ -11,13 +12,25 @@ const userId = "507f191e810c19729de860ea";
 const originals = {
   countDocuments: TenantMemory.countDocuments,
   aggregate: TenantMemory.aggregate,
-  find: TenantMemory.find
+  find: TenantMemory.find,
+  createMemory: memoryService.createMemory,
+  listMemories: memoryService.listMemories,
+  searchMemories: memoryService.searchMemories,
+  getMemory: memoryService.getMemory,
+  updateMemory: memoryService.updateMemory,
+  deleteMemory: memoryService.deleteMemory
 };
 
 afterEach(() => {
   TenantMemory.countDocuments = originals.countDocuments;
   TenantMemory.aggregate = originals.aggregate;
   TenantMemory.find = originals.find;
+  memoryService.createMemory = originals.createMemory;
+  memoryService.listMemories = originals.listMemories;
+  memoryService.searchMemories = originals.searchMemories;
+  memoryService.getMemory = originals.getMemory;
+  memoryService.updateMemory = originals.updateMemory;
+  memoryService.deleteMemory = originals.deleteMemory;
   delete require.cache[require.resolve("../src/app")];
 });
 
@@ -148,4 +161,100 @@ test("GET /api/memory/stats ignora tenantId do corpo e usa token", async () => {
 
   assert.ok(requestedTenantFilters.length > 0);
   assert.ok(requestedTenantFilters.every((item) => item === otherTenantId));
+});
+
+test("CRUD de memórias via API funciona para o painel", async () => {
+  const store = [];
+
+  memoryService.createMemory = async ({ tenantId: scopedTenantId, data }) => {
+    const memory = {
+      id: "memory-1",
+      tenantId: String(scopedTenantId),
+      projectKey: data.projectKey || "associacoes",
+      scope: data.scope || "organization",
+      title: data.title,
+      content: data.content,
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      importance: Number(data.importance || 1),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    store.push(memory);
+    return memory;
+  };
+
+  memoryService.listMemories = async ({ tenantId: scopedTenantId }) => {
+    return store.filter((item) => item.tenantId === String(scopedTenantId));
+  };
+
+  memoryService.searchMemories = async ({ tenantId: scopedTenantId, q }) => {
+    const term = String(q || "").toLowerCase();
+    return store.filter((item) => item.tenantId === String(scopedTenantId) && (`${item.title} ${item.content}`.toLowerCase().includes(term)));
+  };
+
+  memoryService.getMemory = async ({ tenantId: scopedTenantId, id }) => {
+    return store.find((item) => item.id === id && item.tenantId === String(scopedTenantId)) || null;
+  };
+
+  memoryService.updateMemory = async ({ tenantId: scopedTenantId, id, data }) => {
+    const entry = store.find((item) => item.id === id && item.tenantId === String(scopedTenantId));
+    if (!entry) return null;
+    Object.assign(entry, data, { updatedAt: new Date().toISOString() });
+    return entry;
+  };
+
+  memoryService.deleteMemory = async ({ tenantId: scopedTenantId, id }) => {
+    const index = store.findIndex((item) => item.id === id && item.tenantId === String(scopedTenantId));
+    if (index < 0) return null;
+    const [removed] = store.splice(index, 1);
+    return removed;
+  };
+
+  await withServer(async (baseUrl) => {
+    const authHeaders = { "Content-Type": "application/json", Authorization: "Bearer " + authToken() };
+
+    const createdResponse = await fetch(baseUrl + "/api/memory", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ projectKey: "associacoes", scope: "organization", title: "Memoria inicial", content: "Detalhes", tags: ["mvp"], importance: 3 })
+    });
+    const createdBody = await createdResponse.json();
+    assert.equal(createdResponse.status, 201);
+    assert.equal(createdBody.ok, true);
+    assert.equal(createdBody.memory.title, "Memoria inicial");
+
+    const listedResponse = await fetch(baseUrl + "/api/memory", { headers: { Authorization: "Bearer " + authToken() } });
+    const listedBody = await listedResponse.json();
+    assert.equal(listedResponse.status, 200);
+    assert.equal(listedBody.ok, true);
+    assert.equal(listedBody.memories.length, 1);
+
+    const searchedResponse = await fetch(baseUrl + "/api/memory?q=inicial", { headers: { Authorization: "Bearer " + authToken() } });
+    const searchedBody = await searchedResponse.json();
+    assert.equal(searchedResponse.status, 200);
+    assert.equal(searchedBody.memories.length, 1);
+
+    const updatedResponse = await fetch(baseUrl + "/api/memory/memory-1", {
+      method: "PUT",
+      headers: authHeaders,
+      body: JSON.stringify({ projectKey: "associacoes", title: "Memoria editada", content: "Atualizado", importance: 4 })
+    });
+    const updatedBody = await updatedResponse.json();
+    assert.equal(updatedResponse.status, 200);
+    assert.equal(updatedBody.ok, true);
+    assert.equal(updatedBody.memory.title, "Memoria editada");
+
+    const deletedResponse = await fetch(baseUrl + "/api/memory/memory-1?projectKey=associacoes", {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + authToken() }
+    });
+    const deletedBody = await deletedResponse.json();
+    assert.equal(deletedResponse.status, 200);
+    assert.equal(deletedBody.ok, true);
+
+    const listedAfterDelete = await fetch(baseUrl + "/api/memory", { headers: { Authorization: "Bearer " + authToken() } });
+    const listedAfterDeleteBody = await listedAfterDelete.json();
+    assert.equal(listedAfterDelete.status, 200);
+    assert.equal(listedAfterDeleteBody.memories.length, 0);
+  });
 });
